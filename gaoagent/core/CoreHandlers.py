@@ -1,4 +1,5 @@
 import click
+from gaoagent.core.CoreConfig import CoreConfig
 
 
 class CoreHandlers:
@@ -6,7 +7,7 @@ class CoreHandlers:
         click.echo("CoreHandlers.init")
 
     def config(self) -> None:
-        click.echo("CoreHandlers.config")
+       CoreConfig().config()
 
     def chat(
         self,

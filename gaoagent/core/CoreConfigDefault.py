@@ -6,7 +6,7 @@ import click
 import json
 
 
-class CoreConfig:
+class CoreConfigDefault:
     """
     核心配置入口。
 
@@ -261,7 +261,7 @@ class CoreConfig:
             return False        
         rag_dir = Path.home() / ".gaoagent" / "rag"
         rag_dir.mkdir(parents=True, exist_ok=True)
-        # 比较复杂,暂时不实现
+        # TODO: 比较复杂,暂时不实现
         return False
         
     def _load_skills_metadata(self, skills_dir: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:

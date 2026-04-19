@@ -1,3 +1,4 @@
+from math import fabs
 from pathlib import Path
 from typing import Any
 
@@ -27,8 +28,17 @@ class CoreConfig:
         """
         self._ensure_config_dir()
 
-        api_configs: list[dict[str, Any]] = []
-        api_names: set[str] = set()
+        config_dir = self._ensure_config_dir()
+        api_config_file = config_dir / "gao_client_api_config.json"
+        mcp_config_file = config_dir / "gao_client_mcp_setting.json"
+
+        apis: dict[str, Any] = {}
+        existing_api_payload = self._read_json(api_config_file)
+        if isinstance(existing_api_payload, dict) and isinstance(existing_api_payload.get("apis"), dict):
+            apis = existing_api_payload["apis"]
+
+        api_names: set[str] = set(apis.keys())
+        new_api_count = 0
         while True:
             api_config = self._import_api_config()
             if api_config is None:
@@ -39,7 +49,13 @@ class CoreConfig:
                 continue
 
             api_names.add(api_config["name"])
-            api_configs.append(api_config)
+            apis[api_config["name"]] = {
+                "base_url": api_config["base_url"],
+                "api_key": api_config["api_key"],
+                "models": api_config["models"],
+            }
+            self._write_api_config(apis)
+            new_api_count += 1
             click.echo(
                 f"API 配置已采集：name={api_config['name']}, base_url={api_config['base_url']}, models={list(api_config['models'].keys())}"
             )
@@ -47,9 +63,14 @@ class CoreConfig:
             if not click.confirm("继续添加一组 API 配置？", default=False):
                 break
 
-        click.echo(f"API 配置采集完成，共 {len(api_configs)} 组")
+        click.echo(f"API 配置采集完成，本次新增 {new_api_count} 组")
 
         mcp_configs: dict[str, Any] = {}
+        existing_mcp_payload = self._read_json(mcp_config_file)
+        if isinstance(existing_mcp_payload, dict):
+            mcp_configs = existing_mcp_payload
+
+        new_mcp_count = 0
         while True:
             mcp_config = self._import_mcp_config()
             if mcp_config is None:
@@ -59,12 +80,29 @@ class CoreConfig:
             if mcp_name in mcp_configs:
                 click.echo(f"MCP 配置已存在，将覆盖：{mcp_name}")
             mcp_configs[mcp_name] = mcp_body
+            self._write_mcp_config(mcp_configs)
+            new_mcp_count += 1
             click.echo(f"MCP 配置已采集：{mcp_name}")
 
             if not click.confirm("继续添加一组 MCP 配置？", default=False):
                 break
 
-        click.echo(f"MCP 配置采集完成，共 {len(mcp_configs)} 组")
+        click.echo(f"MCP 配置采集完成，本次新增 {new_mcp_count} 组")
+
+        isInitSkills = self._import_skills_config()
+
+        if isInitSkills:
+            skills_dir = Path.home() / ".gaoagent" / "skills"
+            (skills, invalid_skills) = self._load_skills_metadata(skills_dir)
+            click.echo(f"Skills 配置采集完成，共 {len(skills)} 个")
+            for skill in skills:
+                click.echo(f"- {skill['name']}: {skill['description']}")
+            if invalid_skills:
+                click.echo(f"以下 SKILL.md 格式不正确，共 {len(invalid_skills)} 个")
+                for item in invalid_skills:
+                    click.echo(f"- {item['path']}: {item['reason']}")
+
+        self._import_rag_config()
 
     def _ensure_config_dir(self) -> Path:
         """
@@ -78,6 +116,38 @@ class CoreConfig:
 
         config_dir.mkdir(parents=True, exist_ok=True)
         return config_dir
+
+    def _read_json(self, file_path: Path) -> Any | None:
+        while True:
+            if not file_path.exists():
+                return None
+            try:
+                return json.loads(file_path.read_text(encoding="utf-8"))
+            except Exception as e:
+                click.echo(f"读取失败：{file_path}，{e}")
+                if click.confirm("忽略该文件并继续？", default=True):
+                    return None
+
+    def _write_json(self, file_path: Path, payload: Any) -> None:
+        tmp_file = file_path.with_name(f"{file_path.name}.tmp")
+        tmp_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+        tmp_file.replace(file_path)
+
+    def _write_api_config(self, apis: dict[str, Any]) -> None:
+        """
+        覆盖写入 `~/.gaoagent/gao_client_api_config.json`。
+        """
+        config_dir = self._ensure_config_dir()
+        config_file = config_dir / "gao_client_api_config.json"
+        self._write_json(config_file, {"apis": apis})
+
+    def _write_mcp_config(self, mcp_configs: dict[str, Any]) -> None:
+        """
+        覆盖写入 `~/.gaoagent/gao_client_mcp_setting.json`。
+        """
+        config_dir = self._ensure_config_dir()
+        config_file = config_dir / "gao_client_mcp_setting.json"
+        self._write_json(config_file, mcp_configs)
 
     def _import_api_config(self) -> dict[str, Any] | None:
         """
@@ -169,6 +239,120 @@ class CoreConfig:
 
             return value
 
+    def _import_skills_config(self) -> bool :
+        """
+        引导用户输入技能相关配置。
+        """
+
+        if click.confirm("是否跳过 Skills 配置？", default=False):
+            return False        
+
+        skills_dir = Path.home() / ".gaoagent" / "skills"
+        skills_dir.mkdir(parents=True, exist_ok=True)
+
+        click.echo(f"请将Skills对应的md文件复制到 {skills_dir}")
+        return click.confirm("是否已经完成?", default=False)
+
+    def _import_rag_config(self) -> bool :
+        """
+        引导用户输入 RAG 相关配置。
+        """
+        if click.confirm("是否跳过 RAG 配置？", default=False):
+            return False        
+        rag_dir = Path.home() / ".gaoagent" / "rag"
+        rag_dir.mkdir(parents=True, exist_ok=True)
+        # 比较复杂,暂时不实现
+        return False
+        
+    def _load_skills_metadata(self, skills_dir: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+        skills: list[dict[str, str]] = []
+        invalid_skills: list[dict[str, str]] = []
+        if not skills_dir.exists() or not skills_dir.is_dir():
+            return (skills, invalid_skills)
+
+        for file_path in skills_dir.rglob("*"):
+            if not file_path.is_file():
+                continue
+            if file_path.name.lower() != "skill.md":
+                continue
+
+            (meta, reason) = self._parse_skill_frontmatter(file_path)
+            if meta is not None:
+                skills.append(meta)
+                continue
+            if reason:
+                invalid_skills.append({"path": str(file_path), "reason": reason})
+
+        skills.sort(key=lambda x: x["name"])
+        return (skills, invalid_skills)
+
+    def _parse_skill_frontmatter(self, file_path: Path) -> tuple[dict[str, str] | None, str | None]:
+        try:
+            content = file_path.read_text(encoding="utf-8")
+        except Exception as e:
+            return (None, f"读取失败：{e}")
+
+        lines = content.splitlines()
+        if not lines or lines[0].strip() != "---":
+            return (None, "缺少 YAML frontmatter 起始标记 ---")
+
+        i = 1
+        frontmatter: list[str] = []
+        while i < len(lines):
+            if lines[i].strip() == "---":
+                break
+            frontmatter.append(lines[i])
+            i += 1
+        if i >= len(lines) or lines[i].strip() != "---":
+            return (None, "缺少 YAML frontmatter 结束标记 ---")
+
+        name: str | None = None
+        description: str | None = None
+        j = 0
+        while j < len(frontmatter):
+            line = frontmatter[j].rstrip("\n")
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                j += 1
+                continue
+
+            if stripped.startswith("name:"):
+                name_val = stripped.split(":", 1)[1].strip()
+                name = name_val.strip('"').strip("'")
+                j += 1
+                continue
+
+            if stripped.startswith("description:"):
+                desc_val = stripped.split(":", 1)[1].strip()
+                if desc_val in (">", ">-", "|", "|-"):
+                    j += 1
+                    block: list[str] = []
+                    while j < len(frontmatter):
+                        nxt = frontmatter[j]
+                        if nxt.strip() and not nxt.startswith((" ", "\t")):
+                            break
+                        block.append(nxt.lstrip())
+                        j += 1
+                    description = " ".join(" ".join(block).split()).strip()
+                    continue
+
+                description = desc_val.strip('"').strip("'")
+                j += 1
+                continue
+
+            j += 1
+
+        if not name or not description:
+            missing: list[str] = []
+            if not name:
+                missing.append("name")
+            if not description:
+                missing.append("description")
+            return (None, f"缺少字段 {', '.join(missing)}")
+
+        return ({"name": name, "description": description}, None)
+
+    
     def _prompt_non_empty_str(self, text: str, *, hide_input: bool = False) -> str:
         """
         获取非空字符串输入；为空则提示并重新输入。

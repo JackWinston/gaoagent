@@ -7,11 +7,19 @@ from typing import Any
 from gaoagent.core.runner.Utils import safe_json_dumps
 
 
-def build_messages(ctx: Any, *, tool_names: list[str]) -> list[dict[str, Any]]:
-    injections = collect_injections(ctx.memory)
-    system_text = build_system_text(tool_names=tool_names, injections=injections)
+def build_messages(ctx: Any, *, tool_names: list[str], mode: str | None = None) -> list[dict[str, Any]]:
+    memory = getattr(ctx, "memory", {}) or {}
+    injections = collect_injections(memory)
+    m = (mode or getattr(ctx, "mode", "react") or "react").strip().lower()
+    if m == "plan":
+        system_text = build_plan_system_text(tool_names=tool_names, injections=injections)
+    elif m == "retry":
+        system_text = build_retry_system_text(tool_names=tool_names, injections=injections)
+    else:
+        system_text = build_react_system_text(tool_names=tool_names, injections=injections)
     user_payload = {
         "question": getattr(ctx, "question", ""),
+        "mode": m,
         "step": getattr(ctx, "step", 0),
         "last_observation": getattr(ctx, "last_observation", None),
         "last_error": getattr(ctx, "last_error", None),
@@ -23,10 +31,48 @@ def build_messages(ctx: Any, *, tool_names: list[str]) -> list[dict[str, Any]]:
     ]
 
 
-def build_system_text(*, tool_names: list[str], injections: dict[str, Any]) -> str:
+def build_react_system_text(*, tool_names: list[str], injections: dict[str, Any]) -> str:
     base = (
         "你是一个 ReAct Agent。你必须遵循 function-call 响应协议："
         "仅返回 JSON 对象，type 只能是 function_call/final/internal。"
+    )
+    resources = {
+        "tools": tool_names,
+        "mcp": injections.get("mcp"),
+        "skills": injections.get("skills"),
+        "rag": injections.get("rag"),
+    }
+    return base + "\n" + safe_json_dumps({"resources": resources})
+
+
+def build_plan_system_text(*, tool_names: list[str], injections: dict[str, Any]) -> str:
+    base = (
+        "你是一个任务规划器。你的目标是把用户问题拆解为可执行的计划步骤。\n"
+        "你必须只输出 JSON（不要输出任何解释文字或 Markdown）。\n"
+        "输出格式必须是 JSON 数组，每个元素是对象，且必须满足以下之一：\n"
+        '1) {"type":"tool","name":<tool_name>,"arguments":<object>}  调用一个已注册工具\n'
+        '2) {"type":"final","content":<string>}  直接给出最终答案并结束\n'
+        "注意：tool_name 必须来自 resources.tools；arguments 必须是对象（JSON object）。\n"
+        "如果不需要任何工具，请直接输出一个 final。"
+    )
+    resources = {
+        "tools": tool_names,
+        "mcp": injections.get("mcp"),
+        "skills": injections.get("skills"),
+        "rag": injections.get("rag"),
+    }
+    return base + "\n" + safe_json_dumps({"resources": resources})
+
+
+def build_retry_system_text(*, tool_names: list[str], injections: dict[str, Any]) -> str:
+    base = (
+        "你是一个 Retry 反思器（reflector）。你的目标是在一次尝试失败后，给出下一次重试的策略与可选的 memory_patch。\n"
+        "你必须只输出 JSON（不要输出任何解释文字或 Markdown）。\n"
+        "输出必须是 JSON 对象，建议字段：\n"
+        '- strategy: string，重试策略（必填）\n'
+        "- memory_patch: object，可选。将被合并到共享 memory，用于影响下一次尝试（例如 api_name/model）。\n"
+        "- note: string，可选。简短说明（不影响程序执行）。\n"
+        "注意：memory_patch 必须是对象（JSON object），不要包含敏感信息。"
     )
     resources = {
         "tools": tool_names,
@@ -172,4 +218,3 @@ def _load_rag() -> dict[str, Any]:
             indexes.append(p.name)
     indexes.sort()
     return {"available": True, "indexes": indexes}
-

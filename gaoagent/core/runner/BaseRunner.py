@@ -72,7 +72,7 @@ class BaseRunner:
         if question is None or not str(question).strip():
             return RunnerResult(ok=False, error={"type": "ValueError", "message": "question is empty"})
 
-        ctx = RunnerContext(question=str(question).strip(), mode=self._mode, memory=shared_memory or {})
+        ctx = RunnerContext(question=str(question).strip(), mode=self._mode, memory=shared_memory if shared_memory is not None else {})
         for step in range(1, self._cfg.max_steps + 1):
             ctx.step = step
             t0 = time.perf_counter()

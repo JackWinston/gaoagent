@@ -17,7 +17,7 @@ def build_function_specs(tool_names: list[str]) -> list[dict[str, Any]]:
                 "function": {
                     "name": name,
                     "description": f"Tool `{name}` registered in ToolRegistry",
-                    "parameters": {"type": "object", "additionalProperties": True},
+                    "parameters": {"type": "object", "properties": {}, "additionalProperties": True},
                 },
             }
         )

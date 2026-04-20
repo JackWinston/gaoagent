@@ -133,8 +133,7 @@ class BaseRunner:
                     else:
                         tool_msg["name"] = decision.tool_call.name
             
-                    tool_msg["content"] = f'{ "type": "observation", "content": "{raw_out}" }'
-                    tool_msg["type"] = "observation"
+                    tool_msg["content"] = json.dumps({"type": "observation", "content": raw_out}, ensure_ascii=False)
                     memory_messages.append(tool_msg)
 
                 output_summary = summarize(raw_out)

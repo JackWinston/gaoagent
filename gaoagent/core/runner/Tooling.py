@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 import click
 
+from gaoagent.core.runner.Utils import safe_json_dumps
+
 
 @dataclass(frozen=True)
 class ToolCall:
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
+    description: str = ""
+    tool_call_id: str | None = None
 
 
 ToolHandler = Callable[[Any, dict[str, Any]], Any]
@@ -25,11 +30,17 @@ class ToolRegistry:
             raise ValueError("tool name must be non-empty str")
         self._tools[name] = handler
 
-    def call(self, ctx: Any, call: ToolCall) -> Any:
+    def call(self, ctx: Any, call: ToolCall) -> str:
         handler = self._tools.get(call.name)
         if handler is None:
             raise KeyError(f"tool not found: {call.name}")
-        return handler(ctx, call.arguments)
+        raw = handler(ctx, call.arguments)
+        try:
+            setattr(ctx, "last_observation_raw", raw)
+        except Exception:
+            pass
+        content = raw if isinstance(raw, str) else safe_json_dumps(raw)
+        return content
 
     def list_names(self) -> list[str]:
         return sorted(self._tools.keys())
@@ -86,24 +97,25 @@ def default_tool_registry() -> ToolRegistry:
         except Exception as e:
             return {"ok": False, "error": {"type": type(e).__name__, "message": str(e)}, "path": str(path)}
 
-    def _ask_user(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+    def _ask_user(_ctx: Any, args: dict[str, Any]) -> str:
         prompt = args.get("prompt")
         default = args.get("default", None)
         choices = args.get("choices", None)
         if not isinstance(prompt, str) or not prompt.strip():
-            return {"ok": False, "error": {"type": "ValueError", "message": "prompt must be non-empty str"}}
+            return safe_json_dumps({"ok": False, "error": {"type": "ValueError", "message": "prompt must be non-empty str"}})
         if default is not None and not isinstance(default, str):
             default = str(default)
         if choices is not None and not isinstance(choices, list):
-            return {"ok": False, "error": {"type": "ValueError", "message": "choices must be list[str]"}}
+            return safe_json_dumps({"ok": False, "error": {"type": "ValueError", "message": "choices must be list[str]"}})
         if isinstance(choices, list) and any(not isinstance(x, str) for x in choices):
-            return {"ok": False, "error": {"type": "ValueError", "message": "choices must be list[str]"}}
+            return safe_json_dumps({"ok": False, "error": {"type": "ValueError", "message": "choices must be list[str]"}})
         try:
             typ = click.Choice(choices) if isinstance(choices, list) and choices else str
-            answer = click.prompt(prompt.strip(), default=default, type=typ)
-            return {"ok": True, "prompt": prompt, "answer": str(answer), "choices": choices}
+            click.echo(prompt.strip())
+            answer = click.prompt("", default=default, type=typ, prompt_suffix="")
+            return str(answer)
         except Exception as e:
-            return {"ok": False, "error": {"type": type(e).__name__, "message": str(e)}, "prompt": str(prompt)}
+            return safe_json_dumps({"ok": False, "error": {"type": type(e).__name__, "message": str(e)}, "prompt": str(prompt)})
 
     def _write_file(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
         path = args.get("path")

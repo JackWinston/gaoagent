@@ -189,7 +189,10 @@ class OpenAICompatibleHttpClient:
             "model": model,
             "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
         }
-        return final_payload, json.dumps(final_payload, ensure_ascii=False)
+        raw_text = json.dumps(final_payload, ensure_ascii=False)
+        sys.stdout.write(json.dumps(final_payload, ensure_ascii=False, indent=2) + "\n")
+        sys.stdout.flush()
+        return final_payload, raw_text
 
     def post_json(self, url: str, payload: dict[str, Any]) -> HttpResponse:
         """

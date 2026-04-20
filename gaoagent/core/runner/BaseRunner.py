@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -9,7 +10,7 @@ import click
 
 from gaoagent.core.runner.AuditLogger import AuditLogger, default_audit_path
 from gaoagent.core.runner.Tooling import ToolCall, ToolRegistry, default_tool_registry
-from gaoagent.core.runner.Utils import normalize_exception, redact, summarize, truncate_text
+from gaoagent.core.runner.Utils import normalize_exception, redact, safe_json_dumps, summarize, truncate_text
 
 Mode = Literal["plan", "react", "retry"]
 
@@ -29,6 +30,7 @@ class RunnerContext:
     plan: list[dict[str, Any]] | None = None
     memory: dict[str, Any] = field(default_factory=dict)
     last_observation: Any | None = None
+    last_observation_raw: Any | None = None
     last_error: dict[str, Any] | None = None
     step: int = 0
     attempt: int = 0
@@ -43,7 +45,7 @@ class RunnerResult:
 
 @dataclass(frozen=True)
 class Decision:
-    kind: Literal["tool", "final", "internal", "stop"]
+    kind: Literal["tool", "final", "thought", "stop"]
     tool_call: ToolCall | None = None
     final: str | None = None
     internal: dict[str, Any] | None = None
@@ -104,6 +106,13 @@ class BaseRunner:
                     output_summary = summarize((decision.internal or {}).get("output"))
                     self._write_step(ctx, tool_name, input_summary, output_summary, status, err, t0)
                     continue
+                
+                if decision.kind == "thought":
+                    tool_name = (decision.internal or {}).get("name") or "thought"
+                    input_summary = summarize(redact((decision.internal or {}).get("input")))
+                    output_summary = summarize((decision.internal or {}).get("output"))
+                    self._write_step(ctx, tool_name, input_summary, output_summary, status, err, t0)
+                    continue
 
                 if decision.kind != "tool" or decision.tool_call is None:
                     status = "error"
@@ -116,6 +125,18 @@ class BaseRunner:
                 input_summary = summarize(redact(decision.tool_call.arguments))
                 raw_out = self._tools.call(ctx, decision.tool_call)
                 ctx.last_observation = raw_out
+                memory_messages = ctx.memory.get("messages") if isinstance(ctx.memory, dict) else None
+                if isinstance(memory_messages, list):
+                    tool_msg: dict[str, Any] = {"role": "user"}
+                    if isinstance(decision.tool_call.tool_call_id, str) and decision.tool_call.tool_call_id.strip():
+                        tool_msg["tool_call_id"] = decision.tool_call.tool_call_id
+                    else:
+                        tool_msg["name"] = decision.tool_call.name
+            
+                    tool_msg["content"] = f'{ "type": "observation", "content": "{raw_out}" }'
+                    tool_msg["type"] = "observation"
+                    memory_messages.append(tool_msg)
+
                 output_summary = summarize(raw_out)
                 self._write_step(ctx, tool_name, input_summary, output_summary, status, err, t0)
             except Exception as e:

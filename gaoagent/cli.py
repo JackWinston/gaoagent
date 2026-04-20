@@ -37,8 +37,25 @@ def chat_cmd(
 
 
 @cli.command("task", help="创建一个任务")
-def task_cmd() -> None:
-    dispatch("task")
+@click.argument("question", required=False)
+@click.option(
+    "--mode",
+    type=click.Choice(["plan", "react", "retry"], case_sensitive=False),
+    default="react",
+    show_default=True,
+    help="运行模式",
+)
+def task_cmd(question: str | None, mode: str) -> None:
+    """
+    创建并运行一个任务。
+
+    - question: 任务描述（可省略，省略时会进入交互式输入）
+    - mode: 执行模式（plan/react/retry）
+    """
+    q = (question or "").strip()
+    if not q:
+        q = click.prompt("请输入任务", type=str).strip()
+    dispatch("task", question=q, mode=mode)
 
 
 @cli.group("mcp", help="MCP 相关命令")

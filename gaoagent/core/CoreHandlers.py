@@ -1,6 +1,7 @@
 import click
 from gaoagent.core.CoreConfigDefault import CoreConfigDefault
 from gaoagent.core.CoreInit import CoreInit
+from gaoagent.core.TaskRunner import TaskRunner
 
 
 class CoreHandlers:
@@ -20,5 +21,5 @@ class CoreHandlers:
     ) -> None:
         click.echo(f"CoreHandlers.chat , new={new}, prompt={prompt}, api={api}, model={model}, context_size={context_size}")
 
-    def task(self) -> None:
-        click.echo("CoreHandlers.task")
+    def task(self,question:str,mode:str) -> None:
+        TaskRunner().run(question,mode)

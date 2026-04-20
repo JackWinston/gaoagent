@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
+
+import click
 
 
 @dataclass(frozen=True)
@@ -35,8 +38,104 @@ class ToolRegistry:
 def default_tool_registry() -> ToolRegistry:
     tools = ToolRegistry()
 
-    def _echo(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
-        return {"echo": args}
+    def _list_dir(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+        path = args.get("path", ".")
+        if not isinstance(path, str) or not path.strip():
+            return {"ok": False, "error": {"type": "ValueError", "message": "path must be non-empty str"}}
+        try:
+            p = Path(path).expanduser()
+            if not p.is_absolute():
+                p = (Path.cwd() / p).resolve()
+            if not p.exists():
+                return {"ok": False, "error": {"type": "FileNotFoundError", "message": "path not found"}, "path": str(p)}
+            if not p.is_dir():
+                return {"ok": False, "error": {"type": "NotADirectoryError", "message": "path is not a directory"}, "path": str(p)}
+            items: list[dict[str, Any]] = []
+            for child in p.iterdir():
+                try:
+                    st = child.stat()
+                    size = int(st.st_size)
+                except Exception:
+                    size = None
+                items.append(
+                    {
+                        "name": child.name,
+                        "path": str(child),
+                        "is_dir": child.is_dir(),
+                        "size": size,
+                    }
+                )
+            items.sort(key=lambda x: (not bool(x.get("is_dir")), str(x.get("name") or "").lower()))
+            return {"ok": True, "path": str(p), "items": items}
+        except Exception as e:
+            return {"ok": False, "error": {"type": type(e).__name__, "message": str(e)}, "path": str(path)}
 
-    tools.register("echo", _echo)
+    def _read_file(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+        path = args.get("path")
+        encoding = args.get("encoding") or "utf-8"
+        if not isinstance(path, str) or not path.strip():
+            return {"ok": False, "error": {"type": "ValueError", "message": "path must be non-empty str"}}
+        if not isinstance(encoding, str) or not encoding.strip():
+            return {"ok": False, "error": {"type": "ValueError", "message": "encoding must be non-empty str"}}
+        try:
+            p = Path(path).expanduser()
+            if not p.is_absolute():
+                p = (Path.cwd() / p).resolve()
+            content = p.read_text(encoding=encoding)
+            return {"ok": True, "path": str(p), "encoding": encoding, "content": content}
+        except Exception as e:
+            return {"ok": False, "error": {"type": type(e).__name__, "message": str(e)}, "path": str(path)}
+
+    def _ask_user(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+        prompt = args.get("prompt")
+        default = args.get("default", None)
+        choices = args.get("choices", None)
+        if not isinstance(prompt, str) or not prompt.strip():
+            return {"ok": False, "error": {"type": "ValueError", "message": "prompt must be non-empty str"}}
+        if default is not None and not isinstance(default, str):
+            default = str(default)
+        if choices is not None and not isinstance(choices, list):
+            return {"ok": False, "error": {"type": "ValueError", "message": "choices must be list[str]"}}
+        if isinstance(choices, list) and any(not isinstance(x, str) for x in choices):
+            return {"ok": False, "error": {"type": "ValueError", "message": "choices must be list[str]"}}
+        try:
+            typ = click.Choice(choices) if isinstance(choices, list) and choices else str
+            answer = click.prompt(prompt.strip(), default=default, type=typ)
+            return {"ok": True, "prompt": prompt, "answer": str(answer), "choices": choices}
+        except Exception as e:
+            return {"ok": False, "error": {"type": type(e).__name__, "message": str(e)}, "prompt": str(prompt)}
+
+    def _write_file(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+        path = args.get("path")
+        content = args.get("content", "")
+        encoding = args.get("encoding") or "utf-8"
+        mkdirs = args.get("mkdirs", True)
+        append = args.get("append", False)
+        if not isinstance(path, str) or not path.strip():
+            return {"ok": False, "error": {"type": "ValueError", "message": "path must be non-empty str"}}
+        if not isinstance(encoding, str) or not encoding.strip():
+            return {"ok": False, "error": {"type": "ValueError", "message": "encoding must be non-empty str"}}
+        if not isinstance(mkdirs, bool):
+            return {"ok": False, "error": {"type": "ValueError", "message": "mkdirs must be bool"}}
+        if not isinstance(append, bool):
+            return {"ok": False, "error": {"type": "ValueError", "message": "append must be bool"}}
+        try:
+            p = Path(path).expanduser()
+            if not p.is_absolute():
+                p = (Path.cwd() / p).resolve()
+            if mkdirs:
+                p.parent.mkdir(parents=True, exist_ok=True)
+            text = content if isinstance(content, str) else str(content)
+            mode = "a" if append else "w"
+            with p.open(mode, encoding=encoding) as f:
+                n = f.write(text)
+            return {"ok": True, "path": str(p), "encoding": encoding, "written_chars": n, "append": append}
+        except Exception as e:
+            return {"ok": False, "error": {"type": type(e).__name__, "message": str(e)}, "path": str(path)}
+
+
+    tools.register("list_dir", _list_dir)
+    tools.register("read_file", _read_file)
+    tools.register("ask_user", _ask_user)
+    tools.register("write_file", _write_file)
     return tools

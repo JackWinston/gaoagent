@@ -9,15 +9,70 @@ from gaoagent.core.runner.Utils import summarize, truncate_text
 
 
 def build_function_specs(tool_names: list[str]) -> list[dict[str, Any]]:
+    known: dict[str, dict[str, Any]] = {
+        "list_dir": {
+            "description": "获取目录下的文件/子目录列表（默认列出当前工作目录）。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "default": "."},
+                },
+                "additionalProperties": False,
+            },
+        },
+        "read_file": {
+            "description": "读取文本文件内容。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "encoding": {"type": "string", "default": "utf-8"},
+                },
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        },
+        "ask_user": {
+            "description": "向用户提问并等待用户输入，返回用户的回答。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string"},
+                    "default": {"type": "string"},
+                    "choices": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["prompt"],
+                "additionalProperties": False,
+            },
+        },
+        "write_file": {
+            "description": "写入文本文件内容（默认覆盖）。可自动创建父目录。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                    "encoding": {"type": "string", "default": "utf-8"},
+                    "mkdirs": {"type": "boolean", "default": True},
+                    "append": {"type": "boolean", "default": False},
+                },
+                "required": ["path", "content"],
+                "additionalProperties": False,
+            },
+        },
+    }
     specs: list[dict[str, Any]] = []
     for name in tool_names:
+        meta = known.get(name)
+        desc = (meta or {}).get("description") or f"Tool `{name}` registered in ToolRegistry"
+        params = (meta or {}).get("parameters") or {"type": "object", "properties": {}, "additionalProperties": True}
         specs.append(
             {
                 "type": "function",
                 "function": {
                     "name": name,
-                    "description": f"Tool `{name}` registered in ToolRegistry",
-                    "parameters": {"type": "object", "properties": {}, "additionalProperties": True},
+                    "description": desc,
+                    "parameters": params,
                 },
             }
         )

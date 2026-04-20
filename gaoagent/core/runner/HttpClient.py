@@ -212,6 +212,8 @@ class OpenAICompatibleHttpClient:
         """
         req_payload = dict(payload)
         req_payload.setdefault("stream", True)
+        sys.stdout.write(json.dumps(req_payload, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
         req_bytes = json.dumps(req_payload, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
             url=url,

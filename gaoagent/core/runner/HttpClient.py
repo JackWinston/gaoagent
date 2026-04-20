@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
-import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable, Iterator
+
+from gaoagent.core.runner.Utils import now_ms, redact, safe_json_dumps, truncate_text
 
 
 @dataclass(frozen=True)
@@ -30,7 +32,7 @@ class HttpResponse:
 
 
 class OpenAICompatibleHttpClient:
-    def __init__(self, *, base_url: str, api_key: str, timeout_s: int = 60) -> None:
+    def __init__(self, *, base_url: str, api_key: str, timeout_s: int = 60, network_log_path: str | Path | None = None) -> None:
         """
         创建一个兼容 OpenAI Chat Completions 接口的 HTTP 客户端。
 
@@ -48,6 +50,24 @@ class OpenAICompatibleHttpClient:
         self._base_url = base_url
         self._api_key = api_key
         self._timeout_s = timeout_s
+        self._log_path = Path(network_log_path) if network_log_path else None
+
+    def _append_netlog(self, record: dict[str, Any]) -> None:
+        if self._log_path is None:
+            return
+        payload = dict(record)
+        payload.setdefault("ts_ms", now_ms())
+        line = ""
+        try:
+            line = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        except Exception:
+            line = safe_json_dumps(payload)
+        try:
+            self._log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._log_path.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except OSError:
+            return
 
     def build_chat_completions_url(self) -> str:
         """
@@ -96,7 +116,7 @@ class OpenAICompatibleHttpClient:
         if buf:
             yield "\n".join(buf).strip()
 
-    def _stream_chat_completions_and_print(self, response: Any) -> tuple[dict[str, Any], str]:
+    def _stream_chat_completions_and_collect(self, response: Any) -> tuple[dict[str, Any], str]:
         """
         读取 OpenAI 风格流式响应（SSE），实时打印内容，并合成最终响应结构。
 
@@ -115,8 +135,6 @@ class OpenAICompatibleHttpClient:
         tool_calls: dict[int, dict[str, Any]] = {}
         first_event: dict[str, Any] | None = None
         finish_reason: str | None = None
-        printed = False
-
         for data in self._iter_sse_data_events(iter(response.readline, b"")):
             if not data:
                 continue
@@ -141,9 +159,6 @@ class OpenAICompatibleHttpClient:
                 c = delta.get("content")
                 if isinstance(c, str) and c:
                     content_parts.append(c)
-                    sys.stdout.write(c)
-                    sys.stdout.flush()
-                    printed = True
 
                 d_tool_calls = delta.get("tool_calls")
                 if isinstance(d_tool_calls, list):
@@ -168,10 +183,6 @@ class OpenAICompatibleHttpClient:
                             if isinstance(fn.get("arguments"), str):
                                 cur["function"]["arguments"] = str(cur["function"].get("arguments") or "") + fn.get("arguments")
 
-        if printed:
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-
         content = "".join(content_parts)
         message: dict[str, Any] = {"role": "assistant"}
         if content:
@@ -190,8 +201,6 @@ class OpenAICompatibleHttpClient:
             "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
         }
         raw_text = json.dumps(final_payload, ensure_ascii=False)
-        sys.stdout.write(json.dumps(final_payload, ensure_ascii=False, indent=2) + "\n")
-        sys.stdout.flush()
         return final_payload, raw_text
 
     def post_json(self, url: str, payload: dict[str, Any]) -> HttpResponse:
@@ -214,9 +223,16 @@ class OpenAICompatibleHttpClient:
         - 其他异常：ok=False，status=None，reason 为 "异常类型: 异常信息"
         """
         req_payload = dict(payload)
-        req_payload.setdefault("stream", True)
-        sys.stdout.write(json.dumps(req_payload, ensure_ascii=False) + "\n")
-        sys.stdout.flush()
+        req_payload.setdefault("stream", False)
+        want_stream = bool(req_payload.get("stream"))
+        self._append_netlog(
+            {
+                "event": "http_request",
+                "method": "POST",
+                "url": url,
+                "payload": redact(req_payload),
+            }
+        )
         req_bytes = json.dumps(req_payload, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
             url=url,
@@ -224,7 +240,7 @@ class OpenAICompatibleHttpClient:
             method="POST",
             headers={
                 "Content-Type": "application/json",
-                "Accept": "text/event-stream",
+                "Accept": "text/event-stream" if want_stream else "application/json",
                 "Authorization": f"Bearer {self._api_key}",
             },
         )
@@ -237,21 +253,63 @@ class OpenAICompatibleHttpClient:
                 except Exception:
                     ct = ""
                 if "text/event-stream" in ct:
-                    j, raw = self._stream_chat_completions_and_print(response)
-                    return HttpResponse(ok=True, status=getattr(response, "status", 200), reason=None, json=j, text=raw)
+                    j, raw = self._stream_chat_completions_and_collect(response)
+                    status = getattr(response, "status", 200)
+                    self._append_netlog(
+                        {
+                            "event": "http_response",
+                            "url": url,
+                            "status": status,
+                            "ok": True,
+                            "content_type": ct,
+                            "text": truncate_text(raw, 20000),
+                        }
+                    )
+                    return HttpResponse(ok=True, status=status, reason=None, json=j, text=raw)
 
                 raw = response.read().decode("utf-8")
                 try:
                     j = json.loads(raw)
                 except Exception:
                     j = None
-                return HttpResponse(ok=True, status=getattr(response, "status", 200), reason=None, json=j, text=raw)
+                status = getattr(response, "status", 200)
+                self._append_netlog(
+                    {
+                        "event": "http_response",
+                        "url": url,
+                        "status": status,
+                        "ok": True,
+                        "content_type": ct,
+                        "text": truncate_text(raw, 20000),
+                    }
+                )
+                return HttpResponse(ok=True, status=status, reason=None, json=j, text=raw)
         except urllib.error.HTTPError as e:
             body = ""
             try:
                 body = e.read().decode("utf-8")
             except Exception:
                 body = ""
-            return HttpResponse(ok=False, status=int(getattr(e, "code", 0) or 0), reason=str(getattr(e, "reason", "")), json=None, text=body)
+            status = int(getattr(e, "code", 0) or 0)
+            reason = str(getattr(e, "reason", ""))
+            self._append_netlog(
+                {
+                    "event": "http_response",
+                    "url": url,
+                    "status": status,
+                    "ok": False,
+                    "reason": reason,
+                    "text": truncate_text(body, 20000),
+                }
+            )
+            return HttpResponse(ok=False, status=status, reason=reason, json=None, text=body)
         except Exception as e:
+            self._append_netlog(
+                {
+                    "event": "http_error",
+                    "url": url,
+                    "ok": False,
+                    "reason": f"{type(e).__name__}: {e}",
+                }
+            )
             return HttpResponse(ok=False, status=None, reason=f"{type(e).__name__}: {e}", json=None, text=None)

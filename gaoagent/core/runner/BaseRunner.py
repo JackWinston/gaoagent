@@ -70,6 +70,28 @@ class BaseRunner:
     def decide(self, ctx: RunnerContext) -> Decision:
         raise NotImplementedError()
 
+    def _console_value(self, value: Any, limit: int = 4000) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return truncate_text(value, limit)
+        return truncate_text(safe_json_dumps(redact(value)), limit)
+
+    def _console_tool_call(self, call: ToolCall) -> str:
+        args = call.arguments if isinstance(call.arguments, dict) else {"value": call.arguments}
+        safe_args = redact(args)
+        parts: list[str] = []
+        for k in sorted(safe_args.keys()):
+            try:
+                v = safe_args.get(k)
+            except Exception:
+                v = None
+            if not isinstance(k, str):
+                continue
+            parts.append(f"{k}={truncate_text(safe_json_dumps(v), 160)}")
+        inside = ", ".join(parts)
+        return f"方法调用: {call.name}({inside})"
+
     def run(self, question: str, shared_memory: dict[str, Any] | None = None) -> RunnerResult:
         if question is None or not str(question).strip():
             return RunnerResult(ok=False, error={"type": "ValueError", "message": "question is empty"})
@@ -98,6 +120,8 @@ class BaseRunner:
                     input_summary = summarize({"question": ctx.question})
                     output_summary = summarize(decision.final)
                     self._write_step(ctx, tool_name, input_summary, output_summary, status, err, t0)
+                    if self._cfg.console:
+                        click.echo(f"final:{self._console_value(decision.final)}")
                     return RunnerResult(ok=True, final=decision.final)
 
                 if decision.kind == "internal":
@@ -110,8 +134,11 @@ class BaseRunner:
                 if decision.kind == "thought":
                     tool_name = (decision.internal or {}).get("name") or "thought"
                     input_summary = summarize(redact((decision.internal or {}).get("input")))
-                    output_summary = summarize((decision.internal or {}).get("output"))
+                    raw_output = (decision.internal or {}).get("output")
+                    output_summary = summarize(raw_output)
                     self._write_step(ctx, tool_name, input_summary, output_summary, status, err, t0)
+                    if self._cfg.console:
+                        click.echo(f"{tool_name}:{self._console_value(raw_output)}")
                     continue
 
                 if decision.kind != "tool" or decision.tool_call is None:
@@ -123,6 +150,8 @@ class BaseRunner:
 
                 tool_name = decision.tool_call.name
                 input_summary = summarize(redact(decision.tool_call.arguments))
+                if self._cfg.console:
+                    click.echo(self._console_tool_call(decision.tool_call))
                 raw_out = self._tools.call(ctx, decision.tool_call)
                 ctx.last_observation = raw_out
                 memory_messages = ctx.memory.get("messages") if isinstance(ctx.memory, dict) else None
@@ -145,6 +174,8 @@ class BaseRunner:
                 if not tool_name:
                     tool_name = "error"
                 self._write_step(ctx, tool_name, input_summary, output_summary, status, err, t0)
+                if self._cfg.console and err:
+                    click.echo(f"error:{self._console_value(err.get('message'))}")
                 return RunnerResult(ok=False, error=err)
 
         err = {"type": "RuntimeError", "message": f"max_steps reached: {self._cfg.max_steps}"}
@@ -175,7 +206,4 @@ class BaseRunner:
             "error": err,
         }
         self._audit.write(record)
-        if self._cfg.console:
-            click.echo(f"[{ctx.mode}] step={ctx.step} tool={tool} status={status} ms={elapsed_ms}")
-            if status == "error" and err:
-                click.echo(truncate_text(err.get("message", ""), 400))
+        return

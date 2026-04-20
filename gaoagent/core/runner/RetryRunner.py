@@ -61,8 +61,6 @@ class RetryRunner:
                 )
                 inner = self._inner_factory(self._audit, self._cfg, self._tools)
                 result: RunnerResult = inner.run(question, shared_memory=memory)
-                if self._cfg.console:
-                    click.echo(f"[retry] attempt={attempt} ok={result.ok}")
                 if result.ok:
                     return result
 
@@ -147,7 +145,15 @@ class RetryRunner:
 
             config_payload = load_api_config(default_api_config_path())
             selection = select_api_and_model(config_payload, ctx.memory)
-            client = OpenAICompatibleHttpClient(base_url=selection.base_url, api_key=selection.api_key, timeout_s=60)
+            netlog_path = None
+            if isinstance(ctx.memory, dict):
+                netlog_path = ctx.memory.get("netlog_path")
+            client = OpenAICompatibleHttpClient(
+                base_url=selection.base_url,
+                api_key=selection.api_key,
+                timeout_s=60,
+                network_log_path=netlog_path,
+            )
             url = client.build_chat_completions_url()
             req_payload: dict[str, Any] = {"model": selection.model, "messages": messages, "temperature": 0.2}
             resp = client.post_json(url, req_payload)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 import traceback
+from pathlib import Path
 from typing import Any
 
 
@@ -52,3 +53,11 @@ def normalize_exception(e: BaseException) -> dict[str, Any]:
         "message": str(e),
         "traceback": "".join(traceback.format_exception(type(e), e, e.__traceback__)),
     }
+
+
+def find_project_root(start: Path | None = None) -> Path:
+    p = (start or Path.cwd()).resolve()
+    for cur in (p, *p.parents):
+        if (cur / "pyproject.toml").exists():
+            return cur
+    return p

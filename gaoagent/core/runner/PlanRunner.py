@@ -107,7 +107,15 @@ class PlanRunner(BaseRunner):
         except Exception as e:
             return [{"type": "final", "content": f"读取/选择 API 配置失败：{e}"}]
 
-        client = OpenAICompatibleHttpClient(base_url=selection.base_url, api_key=selection.api_key, timeout_s=60)
+        netlog_path = None
+        if isinstance(ctx.memory, dict):
+            netlog_path = ctx.memory.get("netlog_path")
+        client = OpenAICompatibleHttpClient(
+            base_url=selection.base_url,
+            api_key=selection.api_key,
+            timeout_s=60,
+            network_log_path=netlog_path,
+        )
         url = client.build_chat_completions_url()
         req_payload: dict[str, Any] = {"model": selection.model, "messages": messages, "temperature": 0.2}
         resp = client.post_json(url, req_payload)

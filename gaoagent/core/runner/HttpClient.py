@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Iterable, Iterator
+from typing import Any
 
-from gaoagent.core.runner.Utils import now_ms, redact, safe_json_dumps, truncate_text
+from gaoagent.core.runner.Utils import safe_json_dumps
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,7 @@ class HttpResponse:
     - json: 若响应体可解析为 JSON，则为解析后的对象（通常是 dict）
     - text: 原始响应体文本；对于流式响应会是合成后的“最终 JSON 文本”
     """
+
     ok: bool
     status: int | None = None
     reason: str | None = None
@@ -32,7 +33,7 @@ class HttpResponse:
 
 
 class OpenAICompatibleHttpClient:
-    def __init__(self, *, base_url: str, api_key: str, timeout_s: int = 60, network_log_path: str | Path | None = None) -> None:
+    def __init__(self, *, base_url: str, api_key: str, timeout_s: int = 60) -> None:
         """
         创建一个兼容 OpenAI Chat Completions 接口的 HTTP 客户端。
 
@@ -50,26 +51,8 @@ class OpenAICompatibleHttpClient:
         self._base_url = base_url
         self._api_key = api_key
         self._timeout_s = timeout_s
-        self._log_path = Path(network_log_path) if network_log_path else None
 
-    def _append_netlog(self, record: dict[str, Any]) -> None:
-        if self._log_path is None:
-            return
-        payload = dict(record)
-        payload.setdefault("ts_ms", now_ms())
-        line = ""
-        try:
-            line = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-        except Exception:
-            line = safe_json_dumps(payload)
-        try:
-            self._log_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._log_path.open("a", encoding="utf-8") as f:
-                f.write(line + "\n")
-        except OSError:
-            return
-
-    def build_chat_completions_url(self) -> str:
+    def _build_chat_completions_url(self) -> str:
         """
         由 base_url 生成最终 Chat Completions 请求地址。
 
@@ -88,228 +71,186 @@ class OpenAICompatibleHttpClient:
             return f"{clean}/chat/completions"
         return f"{clean}/v1/chat/completions"
 
-    def _iter_sse_data_events(self, chunks: Iterable[bytes]) -> Iterator[str]:
-        """
-        将 SSE（text/event-stream）按“事件”粒度解析为 data 字符串。
-
-        输入：
-        - chunks: 逐行读取到的 bytes（通常来自 response.readline 的迭代器）
-
-        行格式约定（兼容 OpenAI 风格 SSE）：
-        - 空行（\\n 或 \\r\\n）表示一个事件结束
-        - 以 "data:" 开头的行表示该事件的 data 片段
-
-        输出：
-        - 每个事件合并后的 data（可能是 JSON 字符串或 "[DONE]"）
-        - 同一事件内若出现多行 data，会用 "\\n" 拼接并 strip
-        """
-        buf: list[str] = []
-        for chunk in chunks:
-            line = chunk.decode("utf-8", errors="replace")
-            if line in ("\n", "\r\n"):
-                if buf:
-                    yield "\n".join(buf).strip()
-                    buf = []
-                continue
-            if line.startswith("data:"):
-                buf.append(line[len("data:") :].strip())
-        if buf:
-            yield "\n".join(buf).strip()
-
-    def _stream_chat_completions_and_collect(self, response: Any) -> tuple[dict[str, Any], str]:
-        """
-        读取 OpenAI 风格流式响应（SSE），实时打印内容，并合成最终响应结构。
-
-        行为：
-        - 从 response.readline 持续读取 SSE data 事件
-        - 对每个事件尝试解析 JSON，提取 choices[0].delta
-        - 若 delta.content 有增量文本：立即写入 stdout（实现“边生成边展示”）
-        - 若 delta.tool_calls 有增量：按 index 聚合，拼接 function.arguments（常为分片 JSON 字符串）
-        - 收到 "[DONE]" 结束
-
-        返回：
-        - final_payload: 兼容 chat.completion 的最终 dict（将 delta 合并为 message）
-        - raw_text: final_payload 的 JSON 字符串形式（便于沿用非流式的返回处理方式）
-        """
-        content_parts: list[str] = []
-        tool_calls: dict[int, dict[str, Any]] = {}
-        first_event: dict[str, Any] | None = None
-        finish_reason: str | None = None
-        for data in self._iter_sse_data_events(iter(response.readline, b"")):
-            if not data:
-                continue
-            if data == "[DONE]":
-                break
-            try:
-                event = json.loads(data)
-            except Exception:
-                continue
-            if first_event is None and isinstance(event, dict):
-                first_event = event
-
-            choices = event.get("choices") if isinstance(event, dict) else None
-            if not isinstance(choices, list) or not choices:
-                continue
-            choice0 = choices[0] if isinstance(choices[0], dict) else {}
-            delta = choice0.get("delta") if isinstance(choice0, dict) else None
-            if isinstance(choice0, dict) and isinstance(choice0.get("finish_reason"), str):
-                finish_reason = choice0.get("finish_reason")
-
-            if isinstance(delta, dict):
-                c = delta.get("content")
-                if isinstance(c, str) and c:
-                    content_parts.append(c)
-
-                d_tool_calls = delta.get("tool_calls")
-                if isinstance(d_tool_calls, list):
-                    for item in d_tool_calls:
-                        if not isinstance(item, dict):
-                            continue
-                        idx = item.get("index")
-                        if not isinstance(idx, int):
-                            idx = 0
-                        cur = tool_calls.get(idx)
-                        if cur is None:
-                            cur = {"id": None, "type": "function", "function": {"name": None, "arguments": ""}}
-                            tool_calls[idx] = cur
-                        if isinstance(item.get("id"), str):
-                            cur["id"] = item.get("id")
-                        if isinstance(item.get("type"), str):
-                            cur["type"] = item.get("type")
-                        fn = item.get("function")
-                        if isinstance(fn, dict):
-                            if isinstance(fn.get("name"), str):
-                                cur["function"]["name"] = fn.get("name")
-                            if isinstance(fn.get("arguments"), str):
-                                cur["function"]["arguments"] = str(cur["function"].get("arguments") or "") + fn.get("arguments")
-
-        content = "".join(content_parts)
-        message: dict[str, Any] = {"role": "assistant"}
-        if content:
-            message["content"] = content
-        if tool_calls:
-            message["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls.keys())]
-
-        model = ""
-        if isinstance(first_event, dict) and isinstance(first_event.get("model"), str):
-            model = first_event.get("model") or ""
-
-        final_payload: dict[str, Any] = {
-            "id": (first_event or {}).get("id") if isinstance(first_event, dict) else None,
-            "object": "chat.completion",
+    def post_chat_completions(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: Any | None = None,
+    ) -> HttpResponse:
+        url = self._build_chat_completions_url()
+        body_obj: dict[str, Any] = {
             "model": model,
-            "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
+            "messages": messages,
+            "stream": True,
         }
-        raw_text = json.dumps(final_payload, ensure_ascii=False)
-        return final_payload, raw_text
+        if tools is not None:
+            body_obj["tools"] = tools
+        if tool_choice is not None:
+            body_obj["tool_choice"] = tool_choice
+        body_bytes = json.dumps(body_obj, ensure_ascii=False).encode("utf-8")
+        headers: dict[str, str] = {
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        }
+        if isinstance(self._api_key, str) and self._api_key.strip():
+            headers["Authorization"] = f"Bearer {self._api_key}"
 
-    def post_json(self, url: str, payload: dict[str, Any]) -> HttpResponse:
-        """
-        向指定 URL 发送 JSON POST 请求，并返回统一封装的 HttpResponse。
-
-        约定：
-        - 默认启用 stream=True（若 payload 未指定 stream）
-        - 请求头：
-          - Content-Type: application/json
-          - Accept: text/event-stream（优先请求流式返回）
-          - Authorization: Bearer <api_key>
-
-        响应处理：
-        - 如果 Content-Type 包含 text/event-stream：按 SSE 流读取并实时打印内容，同时合成最终 JSON 结构返回
-        - 否则：一次性读取 body，尽力解析 JSON；无论是否可解析，都会保留 text
-
-        异常处理：
-        - HTTPError：ok=False，status 为 HTTP code，text 为错误响应体（若可读取）
-        - 其他异常：ok=False，status=None，reason 为 "异常类型: 异常信息"
-        """
-        req_payload = dict(payload)
-        req_payload.setdefault("stream", False)
-        want_stream = bool(req_payload.get("stream"))
-        self._append_netlog(
-            {
-                "event": "http_request",
-                "method": "POST",
-                "url": url,
-                "payload": redact(req_payload),
-            }
-        )
-        req_bytes = json.dumps(req_payload, ensure_ascii=False).encode("utf-8")
-        request = urllib.request.Request(
-            url=url,
-            data=req_bytes,
-            method="POST",
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "text/event-stream" if want_stream else "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-            },
-        )
+        req = urllib.request.Request(url=url, data=body_bytes, headers=headers, method="POST")
 
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout_s) as response:
-                ct = ""
-                try:
-                    ct = str(getattr(response, "headers", {}).get("Content-Type") or "")
-                except Exception:
-                    ct = ""
-                if "text/event-stream" in ct:
-                    j, raw = self._stream_chat_completions_and_collect(response)
-                    status = getattr(response, "status", 200)
-                    self._append_netlog(
-                        {
-                            "event": "http_response",
-                            "url": url,
-                            "status": status,
-                            "ok": True,
-                            "content_type": ct,
-                            "text": truncate_text(raw, 20000),
-                        }
-                    )
-                    return HttpResponse(ok=True, status=status, reason=None, json=j, text=raw)
+            with urllib.request.urlopen(req, timeout=self._timeout_s) as resp:
+                status = getattr(resp, "status", None) or resp.getcode()
+                content_type = resp.headers.get("Content-Type") or ""
 
-                raw = response.read().decode("utf-8")
-                try:
-                    j = json.loads(raw)
-                except Exception:
-                    j = None
-                status = getattr(response, "status", 200)
-                self._append_netlog(
-                    {
-                        "event": "http_response",
-                        "url": url,
-                        "status": status,
-                        "ok": True,
-                        "content_type": ct,
-                        "text": truncate_text(raw, 20000),
+                if "text/event-stream" in content_type.lower():
+                    message: dict[str, Any] = {"role": "assistant"}
+                    text_parts: list[str] = []
+                    finish_reason: str | None = None
+                    tool_call_map: dict[int, dict[str, Any]] = {}
+
+                    for raw_line in resp:
+                        try:
+                            line = raw_line.decode("utf-8", errors="replace").strip()
+                        except Exception:
+                            continue
+                        if not line:
+                            continue
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[len("data:") :].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                        except Exception:
+                            continue
+                        if not isinstance(chunk, dict):
+                            continue
+                        choices = chunk.get("choices")
+                        if not isinstance(choices, list) or not choices:
+                            continue
+                        first = choices[0] if isinstance(choices[0], dict) else {}
+                        if isinstance(first.get("finish_reason"), str):
+                            finish_reason = first.get("finish_reason")
+                        delta = first.get("delta")
+                        if not isinstance(delta, dict):
+                            delta = first.get("message") if isinstance(first.get("message"), dict) else {}
+
+                        role = delta.get("role")
+                        if isinstance(role, str) and role:
+                            message["role"] = role
+
+                        content = delta.get("content")
+                        if isinstance(content, str) and content:
+                            text_parts.append(content)
+
+                        legacy_fc = delta.get("function_call")
+                        if isinstance(legacy_fc, dict):
+                            tool_calls_delta = [
+                                {
+                                    "index": 0,
+                                    "type": "function",
+                                    "function": {
+                                        "name": legacy_fc.get("name"),
+                                        "arguments": legacy_fc.get("arguments"),
+                                    },
+                                }
+                            ]
+                        else:
+                            tool_calls_delta = delta.get("tool_calls")
+
+                        if isinstance(tool_calls_delta, list) and tool_calls_delta:
+                            for item in tool_calls_delta:
+                                if not isinstance(item, dict):
+                                    continue
+                                idx_raw = item.get("index", 0)
+                                idx = idx_raw if isinstance(idx_raw, int) else 0
+                                entry = tool_call_map.get(idx)
+                                if not isinstance(entry, dict):
+                                    entry = {
+                                        "type": "function",
+                                        "function": {"name": None, "arguments": ""},
+                                    }
+                                    tool_call_map[idx] = entry
+
+                                tool_id = item.get("id")
+                                if isinstance(tool_id, str) and tool_id:
+                                    entry["id"] = tool_id
+
+                                fn = item.get("function")
+                                if isinstance(fn, dict):
+                                    name = fn.get("name")
+                                    if isinstance(name, str) and name:
+                                        entry["function"]["name"] = name
+                                    args = fn.get("arguments")
+                                    if isinstance(args, str):
+                                        entry["function"]["arguments"] += args
+                                    elif args is not None:
+                                        entry["function"]["arguments"] += safe_json_dumps(args)
+
+                    content_text = "".join(text_parts)
+                    if content_text:
+                        message["content"] = content_text
+
+                    if tool_call_map:
+                        tool_calls: list[dict[str, Any]] = []
+                        for i in sorted(tool_call_map.keys()):
+                            call = tool_call_map[i]
+                            if isinstance(call, dict):
+                                tool_calls.append(call)
+                        if tool_calls:
+                            message["tool_calls"] = tool_calls
+
+                    final_payload: dict[str, Any] = {
+                        "object": "chat.completion",
+                        "created": int(time.time()),
+                        "model": model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": message,
+                                "finish_reason": finish_reason,
+                            }
+                        ],
                     }
+                    return HttpResponse(
+                        ok=True,
+                        status=int(status) if isinstance(status, int) else None,
+                        json=final_payload,
+                        text=safe_json_dumps(final_payload),
+                    )
+
+                raw = resp.read()
+                text = raw.decode("utf-8", errors="replace")
+                parsed = None
+                try:
+                    parsed = json.loads(text)
+                except Exception:
+                    parsed = None
+                return HttpResponse(
+                    ok=True,
+                    status=int(status) if isinstance(status, int) else None,
+                    json=parsed if isinstance(parsed, dict) else None,
+                    text=text,
                 )
-                return HttpResponse(ok=True, status=status, reason=None, json=j, text=raw)
         except urllib.error.HTTPError as e:
-            body = ""
             try:
-                body = e.read().decode("utf-8")
+                raw = e.read()
+                text = raw.decode("utf-8", errors="replace")
             except Exception:
-                body = ""
-            status = int(getattr(e, "code", 0) or 0)
-            reason = str(getattr(e, "reason", ""))
-            self._append_netlog(
-                {
-                    "event": "http_response",
-                    "url": url,
-                    "status": status,
-                    "ok": False,
-                    "reason": reason,
-                    "text": truncate_text(body, 20000),
-                }
+                text = str(e)
+            parsed = None
+            try:
+                parsed = json.loads(text)
+            except Exception:
+                parsed = None
+            return HttpResponse(
+                ok=False,
+                status=int(getattr(e, "code", 0)) if getattr(e, "code", None) is not None else None,
+                reason=getattr(e, "reason", None) or str(e),
+                json=parsed if isinstance(parsed, dict) else None,
+                text=text,
             )
-            return HttpResponse(ok=False, status=status, reason=reason, json=None, text=body)
         except Exception as e:
-            self._append_netlog(
-                {
-                    "event": "http_error",
-                    "url": url,
-                    "ok": False,
-                    "reason": f"{type(e).__name__}: {e}",
-                }
-            )
-            return HttpResponse(ok=False, status=None, reason=f"{type(e).__name__}: {e}", json=None, text=None)
+            return HttpResponse(ok=False, reason=str(e))

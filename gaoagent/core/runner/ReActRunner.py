@@ -1,22 +1,19 @@
 from __future__ import annotations
 
-from typing import Any, Callable
 
-from gaoagent.core.runner.ApiConfig import default_api_config_path, load_api_config, select_api_and_model
-from gaoagent.core.runner.AuditLogger import AuditLogger
-from gaoagent.core.runner.BaseRunner import BaseRunner, Decision, RunnerConfig, RunnerContext
-from gaoagent.core.runner.FunctionCallProtocol import (
-    build_function_specs,
-    http_error_to_final,
-    map_chat_completion_to_protocol,
-    protocol_to_decision,
+from gaoagent.core.runner.BaseRunner import (
+    BaseRunner,
+    RunnerConfig,
+    RunnerContext,
+    RunResult,
+    StepResult,
 )
-from gaoagent.core.runner.HttpClient import OpenAICompatibleHttpClient
-from gaoagent.core.runner.PromptBuilder import build_messages
-from gaoagent.core.runner.Tooling import ToolRegistry
-from gaoagent.core.runner.Utils import truncate_text
 
-Policy = Callable[[RunnerContext], Decision]
+from gaoagent.core.runner.HttpClient import OpenAICompatibleHttpClient
+from gaoagent.core.runner.Tooling import ToolCall, ToolRegistry, default_tool_registry
+from gaoagent.core.runner.Utils import safe_json_dumps, parse_llm_response
+from gaoagent.core.runner.PromptBuilder import build_system_prompt
+from gaoagent.core.runner.FunctionCallProtocol import build_function_specs
 
 
 class ReActRunner(BaseRunner):
@@ -24,107 +21,181 @@ class ReActRunner(BaseRunner):
         self,
         *,
         tools: ToolRegistry | None = None,
-        audit: AuditLogger | None = None,
-        config: RunnerConfig | None = None,
-        policy: Policy | None = None,
     ) -> None:
-        super().__init__(mode="react", tools=tools, audit=audit, config=config)
-        self._policy = policy or self._default_policy
-
-    def decide(self, ctx: RunnerContext) -> Decision:
-        return self._policy(ctx)
-
-    def _default_policy(self, ctx: RunnerContext) -> Decision:
-
-        tool_names = self._tools.list_names()
-        messages = build_messages(ctx, tool_names=tool_names, mode="react")
-        tools = build_function_specs(tool_names)
-        llm_raw = self._call_llm_function_call(ctx=ctx, messages=messages, tools=tools)
-        if llm_raw is None:
-            return Decision(
-                kind="final",
-                final="ReActRunner 的 LLM 调用尚未实现。请实现 _call_llm_function_call 后再运行。",
-            )
-        assistant_message = llm_raw.pop("_assistant_message", None)
-        if isinstance(assistant_message, dict):
-            tool_calls = assistant_message.get("tool_calls")
-            if isinstance(tool_calls, list) and tool_calls:
-                assistant_message = dict(assistant_message)
-                assistant_message["tool_calls"] = [tool_calls[0]]
-            messages.append(assistant_message)
-        return protocol_to_decision(ctx.step, set(tool_names), llm_raw)
-
-    def _call_llm_function_call(
-        self,
-        *,
-        ctx: RunnerContext,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-    ) -> dict[str, Any] | None:
-        try:
-            config_payload = load_api_config(default_api_config_path())
-            selection = select_api_and_model(config_payload, ctx.memory)
-        except FileNotFoundError as e:
-            return {
-                "type": "final",
-                "content": f"未找到 API 配置文件：{e}",
-                "_assistant_message": {"role": "assistant", "content": f"未找到 API 配置文件：{e}"},
-            }
-        except KeyError as e:
-            return {"type": "final", "content": str(e), "_assistant_message": {"role": "assistant", "content": str(e)}}
-        except Exception as e:
-            msg = f"读取/选择 API 配置失败：{e}"
-            return {"type": "final", "content": msg, "_assistant_message": {"role": "assistant", "content": msg}}
-
-        netlog_path = None
-        if isinstance(ctx.memory, dict):
-            netlog_path = ctx.memory.get("netlog_path")
-        client = OpenAICompatibleHttpClient(
-            base_url=selection.base_url,
-            api_key=selection.api_key,
-            timeout_s=60,
-            network_log_path=netlog_path,
+        tools = tools or default_tool_registry()
+        super().__init__(
+            mode="react",
+            runner_config=RunnerConfig(32, tools),
         )
-        url = client.build_chat_completions_url()
-        req_payload: dict[str, Any] = {
-            "model": selection.model,
-            "messages": messages,
-            "tools": tools,
-            "tool_choice": "auto",
-            #"temperature": 0.2,
-        }
-        resp = client.post_json(url, req_payload)
-        if not resp.ok:
-            body = resp.text or ""
-            if resp.status is not None:
-                final = http_error_to_final(resp.status, resp.reason or "", body)
-                return {
-                    **final,
-                    "_assistant_message": {"role": "assistant", "content": str(final.get("content") or "")},
-                }
-            msg = f"LLM 请求失败：{resp.reason}"
-            return {"type": "final", "content": msg, "_assistant_message": {"role": "assistant", "content": msg}}
 
-        if resp.json is None:
-            msg = f"LLM 返回非 JSON：{truncate_text(resp.text or '', 500)}"
-            return {"type": "final", "content": msg, "_assistant_message": {"role": "assistant", "content": msg}}
+    def decide(self, ctx: RunnerContext) -> StepResult:
+        return self._callLLM(ctx)
 
-        protocol = map_chat_completion_to_protocol(resp.json)
-        assistant_message = None
-        try:
-            choices = resp.json.get("choices")
-            if isinstance(choices, list) and choices:
-                first = choices[0] if isinstance(choices[0], dict) else {}
-                message = first.get("message") if isinstance(first, dict) else None
-                if isinstance(message, dict) and message.get("role") == "assistant":
-                    tool_calls = message.get("tool_calls")
-                    if isinstance(tool_calls, list) and tool_calls:
-                        assistant_message = dict(message)
-                        assistant_message["tool_calls"] = [tool_calls[0]]
+    def run(self, question: str) -> RunResult:
+        if question is None or not str(question).strip():
+            return RunResult(success=False, error="Invalid question")
+
+        self.runner_context = RunnerContext(step=0, history=[])
+
+        # 添加系统提示词
+        tool_names = (
+            self.runner_config.tools.list_names() if self.runner_config.tools else []
+        )
+        self.runner_context.history.append(
+            {
+                "role": "system",
+                "content": build_system_prompt(
+                    mode=self.mode, tool_names=tool_names
+                ),
+            }
+        )
+        # 添加用户的提问
+        self.runner_context.history.append({"role": "user", "content": question})
+
+        for step in range(1, self.runner_config.max_steps + 1):
+            # 更新上下文中的 step 信息
+            self.runner_context.step = step
+
+            now_step = self.decide(self.runner_context)
+
+            if now_step.decision == "function_call":
+              
+                calls = now_step.function_call or []
+
+                if len(calls) == 1:
+                    c0 = calls[0] if isinstance(calls[0], dict) else {}
+                    self.runner_context.history.append(
+                        {
+                            "role": "assistant",
+                            "content": safe_json_dumps(
+                                {
+                                    "type": "tool_calls",
+                                    "name": c0.get("name"),
+                                    "arguments": c0.get("arguments", {}),
+                                }
+                            ),
+                        }
+                    )
+                else:
+                    self.runner_context.history.append(
+                        {
+                            "role": "assistant",
+                            "content": safe_json_dumps({"type": "tool_calls", "calls": calls}),
+                        }
+                    )
+
+                if not self.runner_config.tools:
+                    return RunResult(success=False, error="No tool registry configured")
+
+                for call in calls:
+                    if not isinstance(call, dict):
+                        observation = safe_json_dumps(
+                            {
+                                "success": False,
+                                "error": {
+                                    "type": "ValueError",
+                                    "message": "tool call must be object",
+                                },
+                            }
+                        )
+                        self.runner_context.history.append(
+                            {
+                                "role": "user",
+                                "content": safe_json_dumps(
+                                    {"type": "observation", "content": observation}
+                                ),
+                            }
+                        )
+                        continue
+
+                    name = call.get("name")
+                    arguments = call.get("arguments", {})
+                    if not isinstance(name, str) or not name.strip():
+                        observation = safe_json_dumps(
+                            {
+                                "success": False,
+                                "error": {
+                                    "type": "ValueError",
+                                    "message": "tool name must be non-empty str",
+                                },
+                            }
+                        )
+                    elif not isinstance(arguments, dict):
+                        observation = safe_json_dumps(
+                            {
+                                "success": False,
+                                "error": {
+                                    "type": "ValueError",
+                                    "message": "tool arguments must be object",
+                                },
+                            }
+                        )
                     else:
-                        assistant_message = message
-        except Exception:
-            assistant_message = None
-        if isinstance(assistant_message, dict):
-            protocol["_assistant_message"] = assistant_message
-        return protocol
+                        try:
+                            observation = self.runner_config.tools.call(
+                                self.runner_context, ToolCall(name=name, arguments=arguments)
+                            )
+                        except Exception as e:
+                            observation = safe_json_dumps(
+                                {
+                                    "success": False,
+                                    "error": {"type": type(e).__name__, "message": str(e)},
+                                }
+                            )
+
+                    self.runner_context.history.append(
+                        {
+                            "role": "user",
+                            "content": safe_json_dumps(
+                                {"type": "observation", "content": observation}
+                            ),
+                        }
+                    )
+                continue
+            if now_step.decision == "thought":
+            
+                protocol = now_step.raw.get("protocol") if isinstance(now_step.raw, dict) else None
+                if isinstance(protocol, dict):
+                    assistant_content = safe_json_dumps(protocol)
+                else:
+                    assistant_content = safe_json_dumps(
+                        {"type": "thought", "content": now_step.content or ""}
+                    )
+                self.runner_context.history.append(
+                    {"role": "assistant", "content": assistant_content}
+                )
+                continue
+            if now_step.decision == "final":
+               
+                protocol = now_step.raw.get("protocol") if isinstance(now_step.raw, dict) else None
+                if isinstance(protocol, dict):
+                    assistant_content = safe_json_dumps(protocol)
+                else:
+                    assistant_content = safe_json_dumps(
+                        {"type": "final", "content": now_step.content or ""}
+                    )
+                self.runner_context.history.append(
+                    {"role": "assistant", "content": assistant_content}
+                )
+                return RunResult(success=True, final_result=now_step.content)
+
+        return RunResult(success=False, error="Max steps reached")
+
+    def _callLLM(self, ctx: RunnerContext) -> StepResult:
+        if not self.request_base_info:
+            return StepResult(decision="final", content="No valid API configuration")
+
+        client = OpenAICompatibleHttpClient(
+            base_url=self.request_base_info.baseurl,
+            api_key=self.request_base_info.api_key,
+        )
+        tool_names = (
+            self.runner_config.tools.list_names() if self.runner_config.tools else []
+        )
+        response = client.post_chat_completions(
+            model=self.request_base_info.modules,
+            messages=ctx.history,
+            tools=build_function_specs(tool_names),
+            tool_choice="auto",
+        )
+        return parse_llm_response(response)

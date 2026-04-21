@@ -113,7 +113,7 @@ def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(fn, dict):
             name = fn.get("name")
             args = parse_tool_arguments(fn.get("arguments"))
-            out: dict[str, Any] = {"type": "function_call", "name": name, "arguments": args}
+            out: dict[str, Any] = {"type": "tool_calls", "name": name, "arguments": args}
             if tool_call_id:
                 out["tool_call_id"] = tool_call_id
             return out
@@ -176,20 +176,6 @@ def protocol_to_decision(step: int, tool_names: set[str], payload: Any) -> Decis
         content = payload.get("content", "")
         return Decision(kind="thought", internal={"name": "observation", "output": str(content)})
 
-    if action_type == "function_call":
-        name = payload.get("name")
-        args = payload.get("arguments", payload.get("parameters", {}))
-        tool_call_id = payload.get("tool_call_id")
-        if not isinstance(name, str) or not name.strip():
-            return Decision(kind="final", final="协议错误：function_call.name 必须是非空字符串")
-        if name not in tool_names:
-            return Decision(kind="final", final=f"协议错误：未知工具 {name}")
-        if not isinstance(args, dict):
-            return Decision(kind="final", final="协议错误：function_call.parameters/arguments 必须是对象")
-        if tool_call_id is not None and not isinstance(tool_call_id, str):
-            tool_call_id = None
-        return Decision(kind="tool", tool_call=ToolCall(name=name, arguments=args, tool_call_id=tool_call_id))
-
     if action_type == "final":
         content = payload.get("content", "")
         return Decision(kind="final", final=str(content))
@@ -212,7 +198,7 @@ def protocol_to_decision(step: int, tool_names: set[str], payload: Any) -> Decis
     return Decision(
         kind="final",
         final=(
-            "协议错误：LLM 响应 type 必须是 question/thought/function_call/observation/final。"
+            "协议错误：LLM 响应 type 必须是 question/thought/observation/final。"
             f" 当前为 {repr(action_type)}，step={step}"
         ),
     )

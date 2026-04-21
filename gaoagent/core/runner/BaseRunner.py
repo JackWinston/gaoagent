@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 from dataclasses import dataclass, field
-from gaoagent.core.runner.Tooling import ToolCall, ToolRegistry
+from gaoagent.core.runner.Tooling import  ToolRegistry
 from gaoagent.core.runner.Utils import load_request_base_info
 
 Mode = Literal["plan", "react", "retry"]

@@ -4,7 +4,6 @@ import json
 from typing import Any
 
 from gaoagent.core.runner.BaseRunner import Decision
-from gaoagent.core.runner.Tooling import ToolCall
 from gaoagent.core.runner.Utils import summarize, truncate_text
 
 

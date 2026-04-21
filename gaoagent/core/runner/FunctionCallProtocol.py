@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from gaoagent.core.runner.BaseRunner import Decision
@@ -79,6 +80,12 @@ def build_function_specs(tool_names: list[str]) -> list[dict[str, Any]]:
 
 
 def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
+    def strip_tool_call_tags(text: str) -> str:
+        # 部分模型会输出工具标签噪声，先清洗再做 JSON/文本协议解析
+        s = text or ""
+        s = re.sub(r"</?tool_call>", "", s, flags=re.IGNORECASE)
+        return s.strip()
+
     def strip_code_fence(text: str) -> str:
         s = (text or "").strip()
         if not s.startswith("```"):
@@ -133,7 +140,7 @@ def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
 
     content = message.get("content")
     if isinstance(content, str):
-        raw_text = strip_code_fence(content)
+        raw_text = (strip_code_fence(content))
         try:
             parsed = json.loads(raw_text)
         except Exception:
@@ -145,7 +152,7 @@ def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
             if "arguments" not in parsed and isinstance(parsed.get("parameters"), dict):
                 parsed["arguments"] = parsed.get("parameters")
             return parsed
-        return {"type": "final", "content": content}
+        return {"type": "final", "content": raw_text}
     if isinstance(content, list):
         texts: list[str] = []
         for item in content:

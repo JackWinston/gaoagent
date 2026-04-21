@@ -4,9 +4,11 @@ import json
 import time
 import traceback
 from pathlib import Path
-from typing import Any
-from BaseRunner import RequestBaseInfo, StepResult
-from gaoagent.core.runner.HttpClient import HttpResponse
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from gaoagent.core.runner.HttpClient import HttpResponse
+    from gaoagent.core.runner.BaseRunner import RequestBaseInfo, StepResult
 
 
 def now_ms() -> int:
@@ -80,6 +82,8 @@ def _config_dir() -> Path:
 
 def load_request_base_info() -> RequestBaseInfo | None:
     """加载请求基础信息, 包括 baseurl、api_key、默认 headers 等等"""
+    from gaoagent.core.runner.BaseRunner import RequestBaseInfo
+
     path = _config_dir() / "gao_client_api_config.json"
     if not path.exists():
         return None
@@ -236,6 +240,9 @@ def load_rag() -> dict[str, Any]:
 
 def parse_llm_response(response: HttpResponse) -> StepResult:
     """解析LLM响应，提取决策内容"""
+    from gaoagent.core.runner.HttpClient import HttpResponse
+    from gaoagent.core.runner.BaseRunner import StepResult
+
     if not isinstance(response, HttpResponse):
         return StepResult(
             decision="final",

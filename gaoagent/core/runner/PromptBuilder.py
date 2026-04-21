@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from BaseRunner import Mode
-from Utils import load_mcp, load_rag, load_skills
+from gaoagent.core.runner.BaseRunner import Mode
+from gaoagent.core.runner.Utils import load_mcp, load_rag, load_skills
 
 
 def build_system_prompt(tool_names: list[str], mode: Mode) -> str:

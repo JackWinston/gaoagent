@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 
 from gaoagent.core.runner.BaseRunner import (
     BaseRunner,
@@ -20,18 +21,22 @@ class ReActRunner(BaseRunner):
     def __init__(
         self,
         *,
+        config: RunnerConfig | None = None,
         tools: ToolRegistry | None = None,
     ) -> None:
-        tools = tools or default_tool_registry()
+        cfg = RunnerConfig(
+            max_steps=(config.max_steps if config else 32),
+            tools=(tools or (config.tools if config else None) or default_tool_registry()),
+        )
         super().__init__(
             mode="react",
-            runner_config=RunnerConfig(32, tools),
+            runner_config=cfg,
         )
 
     def decide(self, ctx: RunnerContext) -> StepResult:
         return self._callLLM(ctx)
 
-    def run(self, question: str) -> RunResult:
+    def run(self, question: str, shared_memory: dict[str, Any] | None = None) -> RunResult:
         if question is None or not str(question).strip():
             return RunResult(success=False, error="Invalid question")
 

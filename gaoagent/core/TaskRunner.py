@@ -30,19 +30,17 @@ class TaskRunner:
             m = "react"
 
         if m == "plan":
-            #result = PlanRunner(config=self._cfg, tools=self._tools).run(question, shared_memory=shared_memory)
-             result = ReActRunner(config=self._cfg, tools=self._tools).run(question, shared_memory=shared_memory)
+            # result = PlanRunner(config=self._cfg, tools=self._tools).run(question)
+            result = ReActRunner(config=self._cfg, tools=self._tools).run(question)
         elif m == "retry":
-            # result = RetryRunner(config=self._cfg, tools=self._tools).run(question, shared_memory=shared_memory)
-            result = ReActRunner(config=self._cfg, tools=self._tools).run(question, shared_memory=shared_memory)
+            # result = RetryRunner(config=self._cfg, tools=self._tools).run(question)
+            result = ReActRunner(config=self._cfg, tools=self._tools).run(question)
         else:
-            result = ReActRunner(config=self._cfg, tools=self._tools).run(question, shared_memory=shared_memory)
+            result = ReActRunner(config=self._cfg, tools=self._tools).run(question)
 
-        if result.ok:
-            if result.final:
-                if not self._cfg.console:
-                    click.echo(result.final)
+        if result.success:
+            if result.final_result:
+                click.echo(result.final_result)
             return
 
-        err = result.error or {"type": "RuntimeError", "message": "unknown error"}
-        click.echo(f"任务失败：{err.get('type')}: {err.get('message')}")
+        click.echo(f"任务失败：{result.error or 'unknown error'}")

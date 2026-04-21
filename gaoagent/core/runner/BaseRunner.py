@@ -45,10 +45,12 @@ class RunnerConfig:
 
     param max_steps: 最多允许多少步决策. 超过这个步数后, Runner 就会停止并返回失败.
     param tools: 可用的工具列表. Runner 会根据需要调用这些工具来辅助决策和完成任务.
+    param llm_invalid_retry: 当 LLM 返回空/不符合协议的响应时, 允许额外重试次数.
     """
 
     max_steps: int = 32
     tools: ToolRegistry | None = None
+    llm_invalid_retry: int = 2
 
 
 @dataclass

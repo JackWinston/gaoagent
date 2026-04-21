@@ -28,6 +28,7 @@ class ReActRunner(BaseRunner):
         cfg = RunnerConfig(
             max_steps=(config.max_steps if config else 32),
             tools=(tools or (config.tools if config else None) or default_tool_registry()),
+            llm_invalid_retry=(config.llm_invalid_retry if config else 2),
         )
         super().__init__(
             mode="react",
@@ -209,11 +210,63 @@ class ReActRunner(BaseRunner):
         )
         tools = build_function_specs(tool_names) if tool_names else None
         tool_choice = "auto" if tools else None
-        response = client.post_chat_completions(
-            model=self.request_base_info.modules,
-            messages=ctx.history,
-            tools=tools,
-            tool_choice=tool_choice,
-            step=ctx.step,
+        max_attempts = max(1, 1 + int(getattr(self.runner_config, "llm_invalid_retry", 0) or 0))
+        attempt = 0
+        last_step: StepResult | None = None
+
+        while attempt < max_attempts:
+            attempt += 1
+            response = client.post_chat_completions(
+                model=self.request_base_info.modules,
+                messages=ctx.history,
+                tools=tools,
+                tool_choice=tool_choice,
+                step=ctx.step,
+            )
+            step_result = parse_llm_response(response)
+            last_step = step_result
+
+            if step_result.decision != "final":
+                return step_result
+
+            content = (step_result.content or "").strip()
+            should_retry = (
+                content == ""
+                or content == "LLM 未返回可执行 tool_call，也未返回文本结果"
+                or content.startswith("LLM 响应缺少 choices")
+                or content.startswith("LLM 响应缺少 message")
+                or content == "LLM 返回为空或不是 JSON 对象"
+            )
+            if not should_retry:
+                return step_result
+
+            if attempt >= max_attempts:
+                if max_attempts <= 1:
+                    return step_result
+                break
+
+            run_logger = get_current_run_logger()
+            if run_logger is not None:
+                run_logger.log_event(
+                    "llm_invalid_response_retry",
+                    {
+                        "attempt": attempt,
+                        "max_attempts": max_attempts,
+                        "content": step_result.content,
+                        "raw": step_result.raw,
+                    },
+                    step=ctx.step,
+                )
+
+        raw = dict(last_step.raw) if last_step is not None and isinstance(last_step.raw, dict) else {}
+        raw["_retry"] = {"attempts": max_attempts, "reason": "invalid_llm_output"}
+        last_content = (last_step.content or "") if last_step is not None else ""
+        return StepResult(
+            decision="final",
+            content=(
+                "LLM 输出为空或不符合协议，已自动重试仍失败。"
+                f" attempts={max_attempts}"
+                + (f"\nlast={last_content}" if last_content else "")
+            ),
+            raw=raw,
         )
-        return parse_llm_response(response)

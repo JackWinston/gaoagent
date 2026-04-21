@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+import click
+
 from gaoagent.core.runner.Utils import safe_json_dumps
 
 

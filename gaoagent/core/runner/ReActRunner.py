@@ -15,6 +15,7 @@ from gaoagent.core.runner.Tooling import ToolCall, ToolRegistry, default_tool_re
 from gaoagent.core.runner.Utils import safe_json_dumps, parse_llm_response
 from gaoagent.core.runner.PromptBuilder import build_system_prompt
 from gaoagent.core.runner.FunctionCallProtocol import build_function_specs
+from gaoagent.core.runner.RunLogger import get_current_run_logger
 
 
 class ReActRunner(BaseRunner):
@@ -62,6 +63,10 @@ class ReActRunner(BaseRunner):
             self.runner_context.step = step
 
             now_step = self.decide(self.runner_context)
+
+            run_logger = get_current_run_logger()
+            if run_logger is not None:
+                run_logger.log_event("step_result", now_step, step=step)
 
             if now_step.decision == "function_call":
                 calls = now_step.function_call or []
@@ -209,5 +214,6 @@ class ReActRunner(BaseRunner):
             messages=ctx.history,
             tools=tools,
             tool_choice=tool_choice,
+            step=ctx.step,
         )
         return parse_llm_response(response)

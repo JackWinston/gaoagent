@@ -5,6 +5,11 @@ import click
 from gaoagent.core.runner.BaseRunner import RunnerConfig
 from gaoagent.core.runner.ReActRunner import ReActRunner
 from gaoagent.core.runner.Tooling import ToolRegistry, default_tool_registry
+from gaoagent.core.runner.RunLogger import (
+    create_run_logger,
+    reset_current_run_logger,
+    set_current_run_logger,
+)
 
 
 class TaskRunner:
@@ -25,18 +30,21 @@ class TaskRunner:
         - 该方法是“命令式输出”，而非返回结构化结果，便于 CLI 使用；
         - 若要在程序内二次封装，建议直接调用各 Runner.run 获得 RunnerResult。
         """
-        m = (mode or "react").strip().lower()
-        if m not in ("plan", "react", "retry"):
-            m = "react"
+        run_logger = create_run_logger()
+        token = set_current_run_logger(run_logger)
+        try:
+            m = (mode or "react").strip().lower()
+            if m not in ("plan", "react", "retry"):
+                m = "react"
 
-        if m == "plan":
-            # result = PlanRunner(config=self._cfg, tools=self._tools).run(question)
-            result = ReActRunner(config=self._cfg, tools=self._tools).run(question)
-        elif m == "retry":
-            # result = RetryRunner(config=self._cfg, tools=self._tools).run(question)
-            result = ReActRunner(config=self._cfg, tools=self._tools).run(question)
-        else:
-            result = ReActRunner(config=self._cfg, tools=self._tools).run(question)
+            if m == "plan":
+                result = ReActRunner(config=self._cfg, tools=self._tools).run(question)
+            elif m == "retry":
+                result = ReActRunner(config=self._cfg, tools=self._tools).run(question)
+            else:
+                result = ReActRunner(config=self._cfg, tools=self._tools).run(question)
+        finally:
+            reset_current_run_logger(token)
 
         if result.success:
             if result.final_result:

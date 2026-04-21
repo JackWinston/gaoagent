@@ -26,54 +26,44 @@ def build_system_prompt(tool_names: list[str], mode: Mode) -> str:
 def build_react_system_text(
     *, tool_names: list[str] | None, injections: dict[str, Any]
 ) -> str:
+    available_tools = tool_names or []
+    tool_line = " | ".join(available_tools) if available_tools else "无可用工具"
 
-    base_prompt = """
+    base_prompt = f"""
 你是一个严格遵循 ReAct 范式的智能代理（ReAct Agent）。
-    
-【最高强制规则】
-1. 仅输出 单个合法JSON对象，禁止输出任何文字、注释、代码块
-2. 禁止返回不完整JSON/多个JSON，禁止使用未定义的type/工具
-3. 输入输出固定格式：{"type":"thought/final","content":"...","name":"","parameters":{}} ,其中 name 和 parameters 是可选的.
-4. 输出格式中, content 字段表示思考的内容或者最终答案
-5. 收到的 question 或者 observation 消息后,必须先返回 thought 类型的消息,包含思考的内容
 
-【type 严格定义】
-1. thought：你的思考过程
-2. final：任务完成，返回最终答案，结束对话
+【目标】
+逐步解决用户问题：Thought -> Action(工具调用) -> Observation -> ... -> Final。
 
+【输出协议（必须遵守）】
+1. 需要调用工具时：
+   - 使用 Chat Completions 的 tool_calls 机制发起函数调用。
+   - 不要在 content 中伪造“tool_calls 文本”。
+2. 不调用工具时：
+   - 仅输出单个 JSON 对象，且 type 只能是 thought 或 final。
+   - thought 格式：{{"type":"thought","content":"..."}}
+   - final 格式：{{"type":"final","content":"..."}} 
+3. 禁止输出 Markdown 代码块、额外解释文字。
+4. `question` 不是合法输出类型；需要向用户追问时，必须调用 ask_user 工具。
+5. 工具返回 observation 后，优先先给 thought，再决定是否继续调用工具或给 final。
+6. 不得编造工具结果；结论必须基于已有上下文或工具返回。
 
+【多轮交互强制规则】
+1. 如果任务属于多轮互动（如游戏、接龙、持续问答），你必须通过 ask_user 获取下一轮用户输入。
+2. 在用户明确表示“结束/停止/退出”前，禁止输出 final。
+3. 当你刚给出一轮回复后，下一步应调用 ask_user（例如：请用户继续输入下一轮内容）。
 
-你需要解决用户的问题。为此，你需要将问题分解为多个步骤。
-首先使用 thought 思考如何解决这个问题，然后使用 tool_calls 调用一个工具 。接着，你会收到 工具或者环境返回的结果 observation 。
-持续这个思考和过程,直到你解决了用户的问题,返回 final 类型的消息,包含最终答案。
-
-例子 1:
-{"type":"question","content":"埃菲尔铁塔有多高？"}
-{"type":"thought","content":"我需要找到埃菲尔铁塔的高度。可以使用搜索工具。"}
-tool_calls 调用工具 search_height，参数 {"building_name":"埃菲尔铁塔"}
-{"type":"observation","content":"埃菲尔铁塔的高度约为330米（包含天线）。"}
-{"type":"thought","content":"搜索结果显示了高度。我已经得到答案了。"}
-{"type":"final_answer","content":"埃菲尔铁塔的高度约为330米"}
-
-例子 2:
-
-{"type":"question","content":"帮我找一个简单的番茄炒蛋食谱，并看看家里的冰箱里有没有西红柿。"}
-{"type":"thought","content":"这个任务分两步。第一步，找到番茄炒蛋的食谱。第二步，检查冰箱里是否有西红柿。我先用 find_recipe 工具找食谱。"}
-tool_calls 调用工具 find_recipe，参数 {"dish":"番茄炒蛋"}
-{"type":"observation","content":"简单的番茄炒蛋食谱：将2个鸡蛋打散，2个番茄切块。热油，先炒鸡蛋，盛出。再热油，炒番茄至软烂，加入鸡蛋，放盐调味即可。"}
-{"type":"thought","content":"好的，我已经有食谱了。食谱需要西红柿。现在我需要用 check_fridge 工具看看冰箱里有没有西红柿。"}
-tool_calls 调用工具 check_fridge，参数 {"item":"西红柿"}
-{"type":"observation","content":"冰箱检查结果：有3个西红柿。"}
-{"type":"thought","content":"我找到了食谱，并且确认了冰箱里有西红柿。可以回答问题了。"}
-{"type":"final_answer","content":"简单的番茄炒蛋食谱是：鸡蛋打散，番茄切块。先炒鸡蛋，再炒番茄，混合后加盐调味。冰箱里有3个西红柿"}
+【决策准则】
+1. 信息不足且有可用工具：优先调用工具。
+2. 无可用工具或工具无法获取更多信息：在 thought 中说明依据与限制，再给 final。
+3. 仅在任务完成或用户明确结束时输出 final；final 要直接回答用户问题，简洁完整。
 
 【可用工具】
-ask_user：向用户提问 | list_dir：列出目录 | read_file：读取文件 | write_file：写入文件
+{tool_line}
 
 【资源配置】
 """
 
-    # 关键修复：内嵌JSON标准化，无语法错误
     resources = {
         "tools": tool_names,
         "mcp": injections.get("mcp"),

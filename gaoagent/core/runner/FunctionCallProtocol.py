@@ -33,7 +33,11 @@ def build_function_specs(tool_names: list[str]) -> list[dict[str, Any]]:
             },
         },
         "ask_user": {
-            "description": "向用户提问并等待用户输入，返回用户的回答。",
+            "description": (
+                "向用户发起一次阻塞式提问并等待输入，返回用户原始回答。"
+                "当任务需要多轮交互（如游戏、追问、确认）时必须调用本工具，"
+                "不要用 assistant 文本模拟提问。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -102,6 +106,34 @@ def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
             i += 1
         return "\n".join(lines[i:-1]).strip()
 
+    def normalize_protocol_dict(data: dict[str, Any]) -> dict[str, Any]:
+        out = dict(data)
+        t = out.get("type")
+        if t == "final_answer":
+            out["type"] = "final"
+        if "arguments" not in out and isinstance(out.get("parameters"), dict):
+            out["arguments"] = out.get("parameters")
+        return out
+
+    def parse_json_object_sequence(text: str) -> list[dict[str, Any]]:
+        decoder = json.JSONDecoder()
+        idx = 0
+        n = len(text)
+        items: list[dict[str, Any]] = []
+        while idx < n:
+            while idx < n and text[idx].isspace():
+                idx += 1
+            if idx >= n:
+                break
+            try:
+                obj, next_idx = decoder.raw_decode(text, idx)
+            except Exception:
+                break
+            if isinstance(obj, dict):
+                items.append(obj)
+            idx = next_idx
+        return items
+
     choices = payload.get("choices")
     if not isinstance(choices, list) or not choices:
         return {"type": "final", "content": f"LLM 响应缺少 choices：{summarize(payload)}"}
@@ -146,12 +178,17 @@ def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
         except Exception:
             parsed = None
         if isinstance(parsed, dict) and isinstance(parsed.get("type"), str):
-            t = parsed.get("type")
-            if t == "final_answer":
-                parsed["type"] = "final"
-            if "arguments" not in parsed and isinstance(parsed.get("parameters"), dict):
-                parsed["arguments"] = parsed.get("parameters")
-            return parsed
+            return normalize_protocol_dict(parsed)
+
+        multi_objs = parse_json_object_sequence(raw_text)
+        typed_objs = [
+            normalize_protocol_dict(x)
+            for x in multi_objs
+            if isinstance(x.get("type"), str)
+        ]
+        if typed_objs:
+            # 对于 "thought + question/observation/final" 连续输出，取最后一个动作作为当前步决策。
+            return typed_objs[-1]
         return {"type": "final", "content": raw_text}
     if isinstance(content, list):
         texts: list[str] = []

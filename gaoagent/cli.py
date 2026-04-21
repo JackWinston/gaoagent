@@ -4,10 +4,26 @@ from gaoagent import __version__
 from gaoagent.router import dispatch
 
 
-@click.group(context_settings={"help_option_names": ["-h", "--help"]})
+@click.group(
+    context_settings={"help_option_names": ["-h", "--help"]},
+    invoke_without_command=True,
+)
 @click.version_option(version=__version__, prog_name="gaoagent")
-def cli() -> None:
+@click.option("--task", "task_question", type=str, help="创建并运行一个任务")
+@click.option(
+    "--mode",
+    type=click.Choice(["plan", "react", "retry"], case_sensitive=False),
+    default="react",
+    show_default=True,
+    help="运行模式（配合 --task 使用）",
+)
+@click.pass_context
+def cli(ctx: click.Context, task_question: str | None, mode: str) -> None:
     """AI Agent CLI 工具"""
+    q = (task_question or "").strip()
+    if q:
+        dispatch("task", question=q, mode=mode)
+        return
 
 
 @cli.command("init", help="在当前目录初始化工具")

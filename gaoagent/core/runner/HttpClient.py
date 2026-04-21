@@ -7,7 +7,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
-from gaoagent.core.runner.Utils import safe_json_dumps
+from gaoagent.core.runner.RunLogger import get_current_run_logger
+from gaoagent.core.runner.Utils import redact, safe_json_dumps
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,7 @@ class OpenAICompatibleHttpClient:
         messages: list[dict[str, str]],
         tools: list[dict[str, Any]] | None = None,
         tool_choice: Any | None = None,
+        step: int | None = None,
     ) -> HttpResponse:
         url = self._build_chat_completions_url()
         body_obj: dict[str, Any] = {
@@ -97,6 +99,19 @@ class OpenAICompatibleHttpClient:
             headers["Authorization"] = f"Bearer {self._api_key}"
 
         req = urllib.request.Request(url=url, data=body_bytes, headers=headers, method="POST")
+
+        run_logger = get_current_run_logger()
+        if run_logger is not None:
+            run_logger.log_event(
+                "http_request",
+                {
+                    "url": url,
+                    "method": "POST",
+                    "headers": redact(headers),
+                    "body": redact(body_obj),
+                },
+                step=step,
+            )
 
         try:
             with urllib.request.urlopen(req, timeout=self._timeout_s) as resp:
@@ -214,6 +229,17 @@ class OpenAICompatibleHttpClient:
                             }
                         ],
                     }
+                    if run_logger is not None:
+                        run_logger.log_event(
+                            "http_response",
+                            {
+                                "ok": True,
+                                "status": int(status) if isinstance(status, int) else None,
+                                "reason": None,
+                                "body": final_payload,
+                            },
+                            step=step,
+                        )
                     return HttpResponse(
                         ok=True,
                         status=int(status) if isinstance(status, int) else None,
@@ -228,6 +254,17 @@ class OpenAICompatibleHttpClient:
                     parsed = json.loads(text)
                 except Exception:
                     parsed = None
+                if run_logger is not None:
+                    run_logger.log_event(
+                        "http_response",
+                        {
+                            "ok": True,
+                            "status": int(status) if isinstance(status, int) else None,
+                            "reason": None,
+                            "body": parsed if isinstance(parsed, dict) else text,
+                        },
+                        step=step,
+                    )
                 return HttpResponse(
                     ok=True,
                     status=int(status) if isinstance(status, int) else None,
@@ -245,6 +282,17 @@ class OpenAICompatibleHttpClient:
                 parsed = json.loads(text)
             except Exception:
                 parsed = None
+            if run_logger is not None:
+                run_logger.log_event(
+                    "http_response",
+                    {
+                        "ok": False,
+                        "status": int(getattr(e, "code", 0)) if getattr(e, "code", None) is not None else None,
+                        "reason": getattr(e, "reason", None) or str(e),
+                        "body": parsed if isinstance(parsed, dict) else text,
+                    },
+                    step=step,
+                )
             return HttpResponse(
                 ok=False,
                 status=int(getattr(e, "code", 0)) if getattr(e, "code", None) is not None else None,
@@ -253,4 +301,15 @@ class OpenAICompatibleHttpClient:
                 text=text,
             )
         except Exception as e:
+            if run_logger is not None:
+                run_logger.log_event(
+                    "http_response",
+                    {
+                        "ok": False,
+                        "status": None,
+                        "reason": str(e),
+                        "body": None,
+                    },
+                    step=step,
+                )
             return HttpResponse(ok=False, reason=str(e))

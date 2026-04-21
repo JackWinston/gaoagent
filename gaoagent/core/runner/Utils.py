@@ -246,7 +246,7 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
     if not response.ok:
         status_text = f"status={response.status}" if response.status is not None else "status=null"
         reason_text = response.reason or "unknown"
-        body = response.text or safe_json_dumps(response.json) if response.json is not None else ""
+        body = response.text or (safe_json_dumps(response.json) if response.json is not None else "")
         content = f"LLM 请求失败：{status_text}, reason={reason_text}"
         if body:
             content = f"{content}\n{truncate_text(body, 800)}"
@@ -284,15 +284,33 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
     action_type = protocol.get("type") if isinstance(protocol, dict) else None
 
     if action_type == "tool_calls":
-        call: dict[str, Any] = {
-            "name": protocol.get("name"),
-            "arguments": protocol.get("arguments", {}),
-        }
-        if isinstance(protocol.get("tool_call_id"), str):
-            call["tool_call_id"] = protocol.get("tool_call_id")
+        calls: list[dict[str, Any]] = []
+        protocol_calls = protocol.get("calls")
+        if isinstance(protocol_calls, list):
+            for item in protocol_calls:
+                if not isinstance(item, dict):
+                    continue
+                call: dict[str, Any] = {
+                    "name": item.get("name"),
+                    "arguments": item.get("arguments", {}),
+                }
+                if isinstance(item.get("tool_call_id"), str):
+                    call["tool_call_id"] = item.get("tool_call_id")
+                calls.append(call)
+
+        # 兼容旧格式（单 tool call）
+        if not calls:
+            fallback_call: dict[str, Any] = {
+                "name": protocol.get("name"),
+                "arguments": protocol.get("arguments", {}),
+            }
+            if isinstance(protocol.get("tool_call_id"), str):
+                fallback_call["tool_call_id"] = protocol.get("tool_call_id")
+            calls.append(fallback_call)
+
         return StepResult(
             decision="function_call",
-            function_call=[call],
+            function_call=calls,
             raw={"payload": payload, "protocol": protocol},
         )
 

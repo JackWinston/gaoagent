@@ -107,15 +107,29 @@ def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
 
     tool_calls = message.get("tool_calls")
     if isinstance(tool_calls, list) and tool_calls:
-        first_call = tool_calls[0] if isinstance(tool_calls[0], dict) else {}
-        tool_call_id = first_call.get("id") if isinstance(first_call.get("id"), str) else None
-        fn = first_call.get("function") if isinstance(first_call, dict) else None
-        if isinstance(fn, dict):
-            name = fn.get("name")
-            args = parse_tool_arguments(fn.get("arguments"))
-            out: dict[str, Any] = {"type": "tool_calls", "name": name, "arguments": args}
-            if tool_call_id:
-                out["tool_call_id"] = tool_call_id
+        calls: list[dict[str, Any]] = []
+        for raw_call in tool_calls:
+            if not isinstance(raw_call, dict):
+                continue
+            fn = raw_call.get("function")
+            if not isinstance(fn, dict):
+                continue
+            call_item: dict[str, Any] = {
+                "name": fn.get("name"),
+                "arguments": parse_tool_arguments(fn.get("arguments")),
+            }
+            tool_call_id = raw_call.get("id")
+            if isinstance(tool_call_id, str) and tool_call_id:
+                call_item["tool_call_id"] = tool_call_id
+            calls.append(call_item)
+
+        if calls:
+            out: dict[str, Any] = {"type": "tool_calls", "calls": calls}
+            # 向后兼容旧逻辑：保留第一条快捷字段
+            out["name"] = calls[0].get("name")
+            out["arguments"] = calls[0].get("arguments", {})
+            if isinstance(calls[0].get("tool_call_id"), str):
+                out["tool_call_id"] = calls[0].get("tool_call_id")
             return out
 
     content = message.get("content")

@@ -59,57 +59,55 @@ class ReActRunner(BaseRunner):
             now_step = self.decide(self.runner_context)
 
             if now_step.decision == "function_call":
-              
                 calls = now_step.function_call or []
+                normalized_calls: list[dict] = []
+                for idx, call in enumerate(calls):
+                    call_obj = call if isinstance(call, dict) else {}
+                    call_id_raw = call_obj.get("tool_call_id")
+                    call_id = (
+                        call_id_raw
+                        if isinstance(call_id_raw, str) and call_id_raw.strip()
+                        else f"call_{step}_{idx}"
+                    )
+                    fn_name = call_obj.get("name")
+                    fn_args = call_obj.get("arguments", {})
+                    if not isinstance(fn_args, dict):
+                        fn_args = {}
+                    normalized_calls.append(
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": fn_name if isinstance(fn_name, str) else "",
+                                "arguments": safe_json_dumps(fn_args),
+                            },
+                            "_runtime_name": fn_name,
+                            "_runtime_arguments": call_obj.get("arguments", {}),
+                        }
+                    )
 
-                if len(calls) == 1:
-                    c0 = calls[0] if isinstance(calls[0], dict) else {}
-                    self.runner_context.history.append(
-                        {
-                            "role": "assistant",
-                            "content": safe_json_dumps(
-                                {
-                                    "type": "tool_calls",
-                                    "name": c0.get("name"),
-                                    "arguments": c0.get("arguments", {}),
-                                }
-                            ),
-                        }
-                    )
-                else:
-                    self.runner_context.history.append(
-                        {
-                            "role": "assistant",
-                            "content": safe_json_dumps({"type": "tool_calls", "calls": calls}),
-                        }
-                    )
+                self.runner_context.history.append(
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": call["id"],
+                                "type": call["type"],
+                                "function": call["function"],
+                            }
+                            for call in normalized_calls
+                        ],
+                    }
+                )
 
                 if not self.runner_config.tools:
                     return RunResult(success=False, error="No tool registry configured")
 
-                for call in calls:
-                    if not isinstance(call, dict):
-                        observation = safe_json_dumps(
-                            {
-                                "success": False,
-                                "error": {
-                                    "type": "ValueError",
-                                    "message": "tool call must be object",
-                                },
-                            }
-                        )
-                        self.runner_context.history.append(
-                            {
-                                "role": "user",
-                                "content": safe_json_dumps(
-                                    {"type": "observation", "content": observation}
-                                ),
-                            }
-                        )
-                        continue
+                for call in normalized_calls:
+                    name = call.get("_runtime_name")
+                    arguments = call.get("_runtime_arguments", {})
 
-                    name = call.get("name")
-                    arguments = call.get("arguments", {})
                     if not isinstance(name, str) or not name.strip():
                         observation = safe_json_dumps(
                             {
@@ -145,22 +143,29 @@ class ReActRunner(BaseRunner):
 
                     self.runner_context.history.append(
                         {
-                            "role": "user",
-                            "content": safe_json_dumps(
-                                {"type": "observation", "content": observation}
+                            "role": "tool",
+                            "tool_call_id": call["id"],
+                            "content": (
+                                observation
+                                if isinstance(observation, str)
+                                else safe_json_dumps(observation)
                             ),
                         }
                     )
                 continue
             if now_step.decision == "thought":
-            
-                protocol = now_step.raw.get("protocol") if isinstance(now_step.raw, dict) else None
+                protocol = (
+                    now_step.raw.get("protocol")
+                    if isinstance(now_step.raw, dict)
+                    else None
+                )
                 if isinstance(protocol, dict):
-                    assistant_content = safe_json_dumps(protocol)
+                    content = protocol.get("content")
+                    if content is None:
+                        content = protocol.get("output")
+                    assistant_content = str(content) if content is not None else ""
                 else:
-                    assistant_content = safe_json_dumps(
-                        {"type": "thought", "content": now_step.content or ""}
-                    )
+                    assistant_content = now_step.content or ""
                 self.runner_context.history.append(
                     {"role": "assistant", "content": assistant_content}
                 )
@@ -192,10 +197,12 @@ class ReActRunner(BaseRunner):
         tool_names = (
             self.runner_config.tools.list_names() if self.runner_config.tools else []
         )
+        tools = build_function_specs(tool_names) if tool_names else None
+        tool_choice = "auto" if tools else None
         response = client.post_chat_completions(
             model=self.request_base_info.modules,
             messages=ctx.history,
-            tools=build_function_specs(tool_names),
-            tool_choice="auto",
+            tools=tools,
+            tool_choice=tool_choice,
         )
         return parse_llm_response(response)

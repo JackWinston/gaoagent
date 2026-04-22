@@ -3,6 +3,13 @@ from typing import Any
 
 import click
 import json
+import datetime
+
+from gaoagent.mcp.MCPClientCompat import (
+    MCPStdioClientSync,
+    build_mcp_tools_cache_payload,
+    write_mcp_tools_cache,
+)
 
 
 class CoreConfigDefault:
@@ -88,6 +95,25 @@ class CoreConfigDefault:
                 break
 
         click.echo(f"MCP 配置采集完成，本次新增 {new_mcp_count} 组")
+
+        if mcp_configs:
+            try:
+                # 在配置阶段预拉取 MCP 工具并落缓存：
+                # - 让 ReActRunner 启动时无需每次都连 MCP server 做 tools/list；
+                # - 工具 schema 可直接注入到 LLM 的 tools 定义中，提高参数生成质量。
+                cache_payload = build_mcp_tools_cache_payload(
+                    mcp_configs,
+                    connect_and_list_tools=lambda name, body: MCPStdioClientSync.from_config(
+                        server_name=name,
+                        config=body,
+                    ).list_tools(),
+                    generated_at=datetime.datetime.now(datetime.UTC).isoformat(),
+                )
+                write_mcp_tools_cache(cache_payload)
+                tool_count = len((cache_payload.get("exported_map") or {}).keys())
+                click.echo(f"MCP 工具缓存已更新，共 {tool_count} 个工具")
+            except Exception as e:
+                click.echo(f"MCP 工具缓存更新失败：{e}")
 
         isInitSkills = self._import_skills_config()
 

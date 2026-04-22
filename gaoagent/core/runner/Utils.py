@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import traceback
 from pathlib import Path
@@ -76,8 +77,51 @@ def find_project_root(start: Path | None = None) -> Path:
 
 
 def _config_dir() -> Path:
-    """配置文件根目录"""
+    """
+    返回默认配置目录。
+
+    约定：
+    - 若设置环境变量 `GAOAGENT_CONFIG_DIR`，优先使用该目录（便于测试与沙箱运行）。
+    - 否则使用用户目录 `~/.gaoagent`。
+    """
+    override_dir = _env_config_dir()
+    if override_dir is not None:
+        return override_dir
     return Path.home() / ".gaoagent"
+
+
+def _env_config_dir() -> Path | None:
+    """解析环境变量覆盖目录；未设置时返回 None。"""
+    override = os.environ.get("GAOAGENT_CONFIG_DIR")
+    if override and override.strip():
+        return Path(override).expanduser().resolve()
+    return None
+
+
+def _project_config_dir() -> Path:
+    """返回项目级配置目录 `<project_root>/.gaoagent`。"""
+    return find_project_root() / ".gaoagent"
+
+
+def _find_config_file(name: str) -> Path:
+    """
+    解析配置文件路径，按以下优先级查找：
+    1. `GAOAGENT_CONFIG_DIR` 指向的目录（用于测试隔离与临时覆盖）；
+    2. 项目级 `.gaoagent/`（便于仓库内固定配置）；
+    3. 用户级 `~/.gaoagent/`（全局默认）。
+
+    注意：该函数不保证路径一定存在，调用方需自行检查。
+    """
+    env_dir = _env_config_dir()
+    if env_dir is not None:
+        candidate = env_dir / name
+        if candidate.exists():
+            return candidate
+    project_dir = _project_config_dir()
+    candidate = project_dir / name
+    if candidate.exists():
+        return candidate
+    return _config_dir() / name
 
 
 def load_request_base_info() -> RequestBaseInfo | None:
@@ -130,8 +174,17 @@ def load_request_base_info() -> RequestBaseInfo | None:
 
 
 def load_mcp() -> dict[str, Any]:
-    """加载MCP服务配置"""
-    path = _config_dir() / "gao_client_mcp_setting.json"
+    """
+    读取 MCP server 配置并输出给 Prompt 注入层使用。
+
+    兼容两种历史格式：
+    - 新格式：`{"mcpServers": {...}}`
+    - 旧格式：`{"serverA": {...}, "serverB": {...}}`
+
+    返回值仅保留可用服务（disabled != true），并做最小字段裁剪，
+    避免把无关字段扩散到上层提示词。
+    """
+    path = _find_config_file("gao_client_mcp_setting.json")
     if not path.exists():
         return {"available": False, "servers": []}
     try:
@@ -142,8 +195,14 @@ def load_mcp() -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {"available": False, "servers": []}
 
+    servers_payload: dict[str, Any] = {}
+    if isinstance(payload.get("mcpServers"), dict):
+        servers_payload = payload.get("mcpServers")
+    else:
+        servers_payload = payload
+
     servers: list[dict[str, Any]] = []
-    for name, body in payload.items():
+    for name, body in servers_payload.items():
         if not isinstance(name, str) or not isinstance(body, dict):
             continue
         if body.get("disabled") is True:
@@ -159,6 +218,47 @@ def load_mcp() -> dict[str, Any]:
         )
     servers.sort(key=lambda x: x.get("name") or "")
     return {"available": True, "servers": servers}
+
+
+def load_mcp_servers_raw() -> dict[str, Any]:
+    """
+    读取原始 MCP servers 配置（不裁剪字段）。
+
+    用途：
+    - ReActRunner 在真正调用 MCP 工具时，需要拿到完整 `command/args/timeout`。
+    - 与 `load_mcp()` 不同，本函数面向运行时执行，不面向提示词展示。
+    """
+    path = _find_config_file("gao_client_mcp_setting.json")
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    if isinstance(payload.get("mcpServers"), dict):
+        servers = payload.get("mcpServers")
+        return servers if isinstance(servers, dict) else {}
+    return payload
+
+
+def load_mcp_tools_cache() -> dict[str, Any] | None:
+    """
+    读取 MCP 工具缓存。
+
+    缓存由配置阶段生成，核心结构是：
+    - `servers`: 各 server 的工具列表
+    - `exported_map`: 导出工具名 -> (server/tool/schema) 映射
+    """
+    path = _find_config_file("gao_client_mcp_tools_cache.json")
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def load_skills() -> dict[str, Any]:

@@ -8,7 +8,11 @@ from gaoagent.core.runner.BaseRunner import Decision
 from gaoagent.core.runner.Utils import summarize, truncate_text
 
 
-def build_function_specs(tool_names: list[str]) -> list[dict[str, Any]]:
+def build_function_specs(
+    tool_names: list[str],
+    *,
+    mcp_exported_map: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     known: dict[str, dict[str, Any]] = {
         "list_dir": {
             "description": "获取目录下的文件/子目录列表（默认列出当前工作目录）。",
@@ -68,8 +72,21 @@ def build_function_specs(tool_names: list[str]) -> list[dict[str, Any]]:
     specs: list[dict[str, Any]] = []
     for name in tool_names:
         meta = known.get(name)
-        desc = (meta or {}).get("description") or f"Tool `{name}` registered in ToolRegistry"
-        params = (meta or {}).get("parameters") or {"type": "object", "properties": {}, "additionalProperties": True}
+        mcp_meta = (
+            (mcp_exported_map or {}).get(name)
+            if isinstance(mcp_exported_map, dict)
+            else None
+        )
+        desc = (
+            (meta or {}).get("description")
+            or (mcp_meta.get("description") if isinstance(mcp_meta, dict) else None)
+            or f"Tool `{name}` registered in ToolRegistry"
+        )
+        params = (
+            (meta or {}).get("parameters")
+            or (mcp_meta.get("parameters") if isinstance(mcp_meta, dict) else None)
+            or {"type": "object", "properties": {}, "additionalProperties": True}
+        )
         specs.append(
             {
                 "type": "function",

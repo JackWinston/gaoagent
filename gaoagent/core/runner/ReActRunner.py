@@ -12,10 +12,16 @@ from gaoagent.core.runner.BaseRunner import (
 
 from gaoagent.core.runner.HttpClient import OpenAICompatibleHttpClient
 from gaoagent.core.runner.Tooling import ToolCall, ToolRegistry, default_tool_registry
-from gaoagent.core.runner.Utils import safe_json_dumps, parse_llm_response
+from gaoagent.core.runner.Utils import (
+    load_mcp_servers_raw,
+    load_mcp_tools_cache,
+    parse_llm_response,
+    safe_json_dumps,
+)
 from gaoagent.core.runner.PromptBuilder import build_system_prompt
 from gaoagent.core.runner.FunctionCallProtocol import build_function_specs
 from gaoagent.core.runner.RunLogger import get_current_run_logger
+from gaoagent.mcp.MCPClientCompat import MCPStdioClientSync, build_mcp_tools_cache_payload
 
 
 class ReActRunner(BaseRunner):
@@ -44,10 +50,77 @@ class ReActRunner(BaseRunner):
 
         self.runner_context = RunnerContext(step=0, history=[])
 
-        # 添加系统提示词
-        tool_names = (
-            self.runner_config.tools.list_names() if self.runner_config.tools else []
+        # MCP 工具发现策略：
+        # 1) 优先读取配置阶段写入的工具缓存（最快、最稳定）。
+        # 2) 若缓存缺失但存在 mcpServers，则在运行时临时拉取一次工具清单作为兜底。
+        #    这样即便用户忘记重新执行 config，也能在本次运行中使用 MCP 工具。
+        mcp_servers_raw = load_mcp_servers_raw()
+        mcp_cache = load_mcp_tools_cache() or {}
+        mcp_exported_map = (
+            mcp_cache.get("exported_map")
+            if isinstance(mcp_cache.get("exported_map"), dict)
+            else {}
         )
+        mcp_discovery_errors: dict[str, str] = {}
+        if (not mcp_exported_map) and isinstance(mcp_servers_raw, dict) and mcp_servers_raw:
+            try:
+                payload = build_mcp_tools_cache_payload(
+                    mcp_servers_raw,
+                    connect_and_list_tools=lambda name, body: MCPStdioClientSync.from_config(
+                        server_name=name,
+                        config=body,
+                    ).list_tools(),
+                    generated_at="runtime",
+                )
+                mcp_exported_map = (
+                    payload.get("exported_map")
+                    if isinstance(payload.get("exported_map"), dict)
+                    else {}
+                )
+                servers_payload = (
+                    payload.get("servers")
+                    if isinstance(payload.get("servers"), dict)
+                    else {}
+                )
+                if isinstance(servers_payload, dict):
+                    for server_name, server_body in servers_payload.items():
+                        if isinstance(server_name, str) and isinstance(server_body, dict):
+                            error = server_body.get("error")
+                            if isinstance(error, str) and error.strip():
+                                mcp_discovery_errors[server_name] = error
+            except Exception:
+                mcp_exported_map = {}
+                mcp_discovery_errors["_runtime"] = "build_mcp_tools_cache_payload failed"
+
+        self._mcp_servers_raw = mcp_servers_raw
+        self._mcp_exported_map = mcp_exported_map
+
+        # 明确失败：有 MCP 配置但没有任何 MCP 工具时，不再静默降级为“仅本地工具”。
+        if isinstance(mcp_servers_raw, dict) and mcp_servers_raw and not mcp_exported_map:
+            run_logger = get_current_run_logger()
+            reason_payload = {
+                "configured_servers": sorted(list(mcp_servers_raw.keys())),
+                "discovery_errors": mcp_discovery_errors,
+            }
+            if run_logger is not None:
+                run_logger.log_event(
+                    "mcp_tools_unavailable",
+                    reason_payload,
+                    step=0,
+                )
+            return RunResult(
+                success=False,
+                error=(
+                    "MCP 已配置但未加载到任何工具，请先修复 MCP 服务可用性。"
+                    f" details={safe_json_dumps(reason_payload)}"
+                ),
+            )
+
+        # 添加系统提示词
+        tool_names = (self.runner_config.tools.list_names() if self.runner_config.tools else [])
+        # 将 MCP 导出工具名加入可调用工具清单，避免与内置工具重名。
+        if isinstance(mcp_exported_map, dict) and mcp_exported_map:
+            tool_names = list(tool_names) + sorted([str(x) for x in mcp_exported_map.keys()])
         self.runner_context.history.append(
             {
                 "role": "system",
@@ -141,9 +214,51 @@ class ReActRunner(BaseRunner):
                         )
                     else:
                         try:
-                            observation = self.runner_config.tools.call(
-                                self.runner_context, ToolCall(name=name, arguments=arguments)
-                            )
+                            # 路由顺序：
+                            # 1) 先走内置 ToolRegistry（本地工具）
+                            # 2) 再走 MCP 导出工具映射（远程/stdio 工具）
+                            # 3) 两者都找不到则返回 Unknown tool
+                            if self.runner_config.tools and name in self.runner_config.tools.list_names():
+                                observation = self.runner_config.tools.call(
+                                    self.runner_context, ToolCall(name=name, arguments=arguments)
+                                )
+                            elif isinstance(mcp_exported_map, dict) and name in mcp_exported_map:
+                                mcp_meta = mcp_exported_map.get(name) or {}
+                                server_name = mcp_meta.get("server")
+                                tool_name = mcp_meta.get("tool")
+                                server_cfg = (
+                                    mcp_servers_raw.get(server_name)
+                                    if isinstance(server_name, str) and isinstance(mcp_servers_raw, dict)
+                                    else None
+                                )
+                                if not isinstance(server_name, str) or not isinstance(tool_name, str) or not isinstance(server_cfg, dict):
+                                    observation = {
+                                        "success": False,
+                                        "error": {
+                                            "type": "ValueError",
+                                            "message": f"MCP tool 映射无效：name={name}",
+                                        },
+                                    }
+                                else:
+                                    # MCP 调用结果统一封装为 success/result 结构，便于模型侧稳定解析。
+                                    observation = MCPStdioClientSync.from_config(
+                                        server_name=server_name,
+                                        config=server_cfg,
+                                    ).call_tool(tool_name=tool_name, arguments=arguments)
+                                    observation = {
+                                        "success": True,
+                                        "server": server_name,
+                                        "tool": tool_name,
+                                        "result": observation,
+                                    }
+                            else:
+                                observation = {
+                                    "success": False,
+                                    "error": {
+                                        "type": "ValueError",
+                                        "message": f"Unknown tool: {name}",
+                                    },
+                                }
                         except Exception as e:
                             observation = safe_json_dumps(
                                 {
@@ -208,7 +323,24 @@ class ReActRunner(BaseRunner):
         tool_names = (
             self.runner_config.tools.list_names() if self.runner_config.tools else []
         )
-        tools = build_function_specs(tool_names) if tool_names else None
+        # `_mcp_exported_map` 在 run() 开始阶段计算并缓存到实例上，避免每个 step 重算。
+        mcp_exported_map = getattr(self, "_mcp_exported_map", None)
+        if (not isinstance(mcp_exported_map, dict)) or (isinstance(mcp_exported_map, dict) and not mcp_exported_map):
+            mcp_cache = load_mcp_tools_cache() or {}
+            mcp_exported_map = (
+                mcp_cache.get("exported_map")
+                if isinstance(mcp_cache.get("exported_map"), dict)
+                else {}
+            )
+        all_tool_names = list(tool_names)
+        if isinstance(mcp_exported_map, dict) and mcp_exported_map:
+            all_tool_names += sorted([str(x) for x in mcp_exported_map.keys()])
+
+        tools = (
+            build_function_specs(all_tool_names, mcp_exported_map=mcp_exported_map)
+            if all_tool_names
+            else None
+        )
         tool_choice = "auto" if tools else None
         max_attempts = max(1, 1 + int(getattr(self.runner_config, "llm_invalid_retry", 0) or 0))
         attempt = 0

@@ -68,6 +68,21 @@ def build_function_specs(
                 "additionalProperties": False,
             },
         },
+        "run_command": {
+            "description": (
+                "在本地执行控制台命令并返回输出。"
+                "workdir 必须是当前工作目录或其子目录。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workdir": {"type": "string"},
+                    "command": {"type": "string"},
+                },
+                "required": ["workdir", "command"],
+                "additionalProperties": False,
+            },
+        },
     }
     specs: list[dict[str, Any]] = []
     for name in tool_names:

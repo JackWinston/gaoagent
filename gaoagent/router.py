@@ -36,8 +36,6 @@ ROUTES: dict[str, Route] = {
     "skills.list": Route(factory=SkillsHandlers, method_name="list"),
     "skills.install": Route(factory=SkillsHandlers, method_name="install"),
     "skills.uninstall": Route(factory=SkillsHandlers, method_name="uninstall"),
-    "skills.enable": Route(factory=SkillsHandlers, method_name="enable"),
-    "skills.disable": Route(factory=SkillsHandlers, method_name="disable"),
 
     "rag.index": Route(factory=RagHandlers, method_name="index"),
     "rag.query": Route(factory=RagHandlers, method_name="query"),

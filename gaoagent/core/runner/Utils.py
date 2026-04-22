@@ -299,6 +299,9 @@ def load_skills() -> dict[str, Any]:
         meta = parse_skill_frontmatter(file_path)
         if meta:
             meta["path"] = str(file_path)
+            body = meta.get("body", "")
+            if body and len(body) > 20000:
+                meta["body"] = body[:20000] + "\n...[Content Truncated]..."
             items.append(meta)
 
     items.sort(key=lambda x: x.get("name") or "")
@@ -306,7 +309,7 @@ def load_skills() -> dict[str, Any]:
 
 
 def parse_skill_frontmatter(file_path: Path) -> dict[str, Any] | None:
-    """解析Skill.md的前置元数据"""
+    """解析Skill.md的前置元数据及正文"""
     try:
         content = file_path.read_text(encoding="utf-8")
     except Exception:
@@ -326,6 +329,9 @@ def parse_skill_frontmatter(file_path: Path) -> dict[str, Any] | None:
         i += 1
     else:
         return None
+
+    body_lines = lines[i+1:]
+    body = "\n".join(body_lines).strip()
 
     name = description = None
     j = 0
@@ -350,7 +356,7 @@ def parse_skill_frontmatter(file_path: Path) -> dict[str, Any] | None:
                 description = desc_val.strip("\"'")
         j += 1
 
-    return {"name": name, "description": description} if name and description else None
+    return {"name": name, "description": description, "body": body} if name and description else None
 
 
 def load_rag() -> dict[str, Any]:

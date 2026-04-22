@@ -133,16 +133,6 @@ def skills_uninstall_cmd() -> None:
     dispatch("skills.uninstall")
 
 
-@skills_group.command("enable", help="启用 skill")
-def skills_enable_cmd() -> None:
-    dispatch("skills.enable")
-
-
-@skills_group.command("disable", help="禁用 skill")
-def skills_disable_cmd() -> None:
-    dispatch("skills.disable")
-
-
 @cli.group("rag", help="RAG 相关命令")
 def rag_group() -> None:
     pass

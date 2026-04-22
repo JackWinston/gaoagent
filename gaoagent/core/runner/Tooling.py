@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import subprocess
 from typing import Any, Callable
 
 import click
@@ -251,8 +252,94 @@ def default_tool_registry() -> ToolRegistry:
                 "path": str(path),
             }
 
+    def _run_command(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+        workdir = args.get("workdir")
+        command = args.get("command")
+        if not isinstance(workdir, str) or not workdir.strip():
+            return {
+                "success": False,
+                "error": {
+                    "type": "ValueError",
+                    "message": "workdir must be non-empty str",
+                },
+            }
+        if not isinstance(command, str) or not command.strip():
+            return {
+                "success": False,
+                "error": {
+                    "type": "ValueError",
+                    "message": "command must be non-empty str",
+                },
+            }
+
+        try:
+            cwd = Path.cwd().resolve()
+            target = Path(workdir).expanduser()
+            if not target.is_absolute():
+                target = (cwd / target).resolve()
+            else:
+                target = target.resolve()
+
+            if not target.exists():
+                return {
+                    "success": False,
+                    "error": {
+                        "type": "FileNotFoundError",
+                        "message": "workdir not found",
+                    },
+                    "workdir": str(target),
+                }
+            if not target.is_dir():
+                return {
+                    "success": False,
+                    "error": {
+                        "type": "NotADirectoryError",
+                        "message": "workdir is not a directory",
+                    },
+                    "workdir": str(target),
+                }
+            if target != cwd and cwd not in target.parents:
+                return {
+                    "success": False,
+                    "error": {
+                        "type": "PermissionError",
+                        "message": "workdir must be current directory or its subdirectory",
+                    },
+                    "workdir": str(target),
+                    "cwd": str(cwd),
+                }
+
+            completed = subprocess.run(
+                command,
+                cwd=str(target),
+                shell=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            stdout = completed.stdout or ""
+            stderr = completed.stderr or ""
+            return {
+                "success": completed.returncode == 0,
+                "workdir": str(target),
+                "command": command,
+                "exit_code": int(completed.returncode),
+                "stdout": stdout,
+                "stderr": stderr,
+                "response": f"{stdout}{stderr}",
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": {"type": type(e).__name__, "message": str(e)},
+                "workdir": str(workdir),
+                "command": str(command),
+            }
+
     tools.register("list_dir", _list_dir)
     tools.register("read_file", _read_file)
     tools.register("ask_user", _ask_user)
     tools.register("write_file", _write_file)
+    tools.register("run_command", _run_command)
     return tools

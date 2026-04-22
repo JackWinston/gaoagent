@@ -90,23 +90,27 @@ def mcp_add_cmd() -> None:
 
 
 @mcp_group.command("remove", help="移除 MCP")
-def mcp_remove_cmd() -> None:
-    dispatch("mcp.remove")
+@click.argument("name", required=False)
+def mcp_remove_cmd(name: str | None) -> None:
+    dispatch("mcp.remove", name=name)
 
 
 @mcp_group.command("enable", help="启用 MCP")
-def mcp_enable_cmd() -> None:
-    dispatch("mcp.enable")
+@click.argument("name", required=False)
+def mcp_enable_cmd(name: str | None) -> None:
+    dispatch("mcp.enable", name=name)
 
 
 @mcp_group.command("disable", help="禁用 MCP")
-def mcp_disable_cmd() -> None:
-    dispatch("mcp.disable")
+@click.argument("name", required=False)
+def mcp_disable_cmd(name: str | None) -> None:
+    dispatch("mcp.disable", name=name)
 
 
 @mcp_group.command("test", help="测试 MCP")
-def mcp_test_cmd() -> None:
-    dispatch("mcp.test")
+@click.argument("name", required=False)
+def mcp_test_cmd(name: str | None) -> None:
+    dispatch("mcp.test", name=name)
 
 
 @cli.group("skills", help="Skills 相关命令")

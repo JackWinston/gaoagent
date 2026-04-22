@@ -45,13 +45,11 @@ def build_react_system_text(
    - final 格式：{{"type":"final","content":"..."}} 
 3. 禁止输出 Markdown 代码块、额外解释文字。
 4. `question` 不是合法输出类型；需要向用户追问时，必须调用 ask_user 工具。
-5. 工具返回 observation 后，优先先给 thought，再决定是否继续调用工具或给 final。
+5. 工具返回 observation 后，必须先输出 thought，再决定是否继续调用工具或给 final。
 6. 不得编造工具结果；结论必须基于已有上下文或工具返回。
+7. 任务完成或用户明确结束时，必须输出 final。
 
-【多轮交互强制规则】
-1. 如果任务属于多轮互动（如游戏、接龙、持续问答），你必须通过 ask_user 获取下一轮用户输入。
-2. 在用户明确表示“结束/停止/退出”前，禁止输出 final。
-3. 当你刚给出一轮回复后，下一步应调用 ask_user（例如：请用户继续输入下一轮内容）。
+
 
 【决策准则】
 1. 信息不足且有可用工具：优先调用工具。
@@ -65,8 +63,6 @@ def build_react_system_text(
 """
 
     resources = {
-        "tools": tool_names,
-        "mcp": injections.get("mcp"),
         "skills": injections.get("skills"),
         "rag": injections.get("rag"),
     }

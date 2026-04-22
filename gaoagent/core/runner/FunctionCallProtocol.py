@@ -84,13 +84,30 @@ def build_function_specs(tool_names: list[str]) -> list[dict[str, Any]]:
 
 
 def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
-    def strip_tool_call_tags(text: str) -> str:
-        # 部分模型会输出工具标签噪声，先清洗再做 JSON/文本协议解析
-        s = text or ""
-        s = re.sub(r"</?tool_call>", "", s, flags=re.IGNORECASE)
-        return s.strip()
+    """
+    将 Chat Completions 响应映射为内部协议对象。
+
+    该函数负责“容错解析 + 协议归一化”，目标是尽量从模型返回中提取
+    可执行动作（tool_calls）或可消费文本（thought/final），并在异常形态下
+    返回 retry 信号，提示上层执行自动重试。
+
+    处理顺序：
+    - 校验顶层结构：choices -> message。
+    - 优先解析 message.tool_calls（支持多调用）。
+    - 再解析 message.content：
+      - 字符串：尝试 JSON 对象、连续 JSON 对象序列、最后回退纯文本 final。
+      - 列表：提取 text 字段并拼接为 final。
+    - 若无 tool_calls 且无可用 content：返回 retry 兜底提示。
+
+    参数:
+    - payload: OpenAI 兼容接口返回的 JSON 对象。
+
+    返回:
+    - dict[str, Any]: 内部协议对象，常见 type 为 tool_calls / final / thought / retry。
+    """
 
     def strip_code_fence(text: str) -> str:
+        # 兼容模型把 JSON 包在 ```json ... ``` 中的输出形态。
         s = (text or "").strip()
         if not s.startswith("```"):
             return s
@@ -107,6 +124,7 @@ def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
         return "\n".join(lines[i:-1]).strip()
 
     def normalize_protocol_dict(data: dict[str, Any]) -> dict[str, Any]:
+        # 对历史/别名字段做归一化，降低上层协议分支复杂度。
         out = dict(data)
         t = out.get("type")
         if t == "final_answer":
@@ -116,6 +134,7 @@ def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
         return out
 
     def parse_json_object_sequence(text: str) -> list[dict[str, Any]]:
+        # 支持连续对象输出：{"type":"thought"}{"type":"final"}。
         decoder = json.JSONDecoder()
         idx = 0
         n = len(text)
@@ -135,15 +154,18 @@ def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
         return items
 
     choices = payload.get("choices")
+    # 顶层结构缺失时返回 retry，避免把暂时性异常直接当作最终答案。
     if not isinstance(choices, list) or not choices:
-        return {"type": "final", "content": f"LLM 响应缺少 choices：{summarize(payload)}"}
+        return {"type": "retry", "content": f"LLM 响应缺少 choices：{summarize(payload)}"}
 
     first = choices[0] if isinstance(choices[0], dict) else {}
     message = first.get("message") if isinstance(first, dict) else None
+    # 仅取第一条 choice；当前执行器按单步单动作消费。
     if not isinstance(message, dict):
-        return {"type": "final", "content": f"LLM 响应缺少 message：{summarize(first)}"}
+        return {"type": "retry", "content": f"LLM 响应缺少 message：{summarize(first)}"}
 
     tool_calls = message.get("tool_calls")
+    # 优先工具调用：一旦可解析到工具动作，就不再走文本协议分支。
     if isinstance(tool_calls, list) and tool_calls:
         calls: list[dict[str, Any]] = []
         for raw_call in tool_calls:
@@ -162,24 +184,21 @@ def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
             calls.append(call_item)
 
         if calls:
-            out: dict[str, Any] = {"type": "tool_calls", "calls": calls}
-            # 向后兼容旧逻辑：保留第一条快捷字段
-            out["name"] = calls[0].get("name")
-            out["arguments"] = calls[0].get("arguments", {})
-            if isinstance(calls[0].get("tool_call_id"), str):
-                out["tool_call_id"] = calls[0].get("tool_call_id")
-            return out
+            return {"type": "tool_calls", "calls": calls}
 
     content = message.get("content")
     if isinstance(content, str):
+        # 先清理 markdown code fence，再做 JSON 协议解析。
         raw_text = (strip_code_fence(content))
         try:
             parsed = json.loads(raw_text)
         except Exception:
             parsed = None
+        # 单对象 JSON 协议：{"type":"thought|final|..."}。
         if isinstance(parsed, dict) and isinstance(parsed.get("type"), str):
             return normalize_protocol_dict(parsed)
 
+        # 连续对象协议：取最后一个 typed 对象作为当前步动作。
         multi_objs = parse_json_object_sequence(raw_text)
         typed_objs = [
             normalize_protocol_dict(x)
@@ -189,8 +208,10 @@ def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
         if typed_objs:
             # 对于 "thought + question/observation/final" 连续输出，取最后一个动作作为当前步决策。
             return typed_objs[-1]
+        # 既非协议 JSON，也不是可拆分对象序列，则按普通文本 final 处理。
         return {"type": "final", "content": raw_text}
     if isinstance(content, list):
+        # 兼容多模态内容数组，尽力抽取 text 片段。
         texts: list[str] = []
         for item in content:
             if isinstance(item, dict):
@@ -200,7 +221,8 @@ def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
         if texts:
             return {"type": "final", "content": "\n".join(texts)}
 
-    return {"type": "final", "content": "LLM 未返回可执行 tool_call，也未返回文本结果"}
+    # 兜底：无 tool_calls 且无可用文本，通常是上游流式输出异常或被截断。
+    return {"type": "retry", "content": "LLM 未返回可执行 tool_call，也未返回文本结果"}
 
 
 def parse_tool_arguments(raw: Any) -> dict[str, Any]:

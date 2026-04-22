@@ -68,7 +68,8 @@ class TestInvalidLLMRetry(unittest.TestCase):
 
         self.assertEqual(mocked.call_count, 1)
         self.assertEqual(out.decision, "final")
-        self.assertEqual(out.content, "LLM 未返回可执行 tool_call，也未返回文本结果")
+        self.assertIn("已自动重试仍失败", out.content or "")
+        self.assertIn("LLM 未返回可执行 tool_call，也未返回文本结果", out.content or "")
 
     def test_exhaust_retries_returns_retry_failure_message(self):
         invalid = HttpResponse(ok=True, status=200, json=_stream_payload_with_message({"role": "assistant"}))
@@ -88,4 +89,3 @@ class TestInvalidLLMRetry(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

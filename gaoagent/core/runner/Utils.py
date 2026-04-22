@@ -239,7 +239,29 @@ def load_rag() -> dict[str, Any]:
 
 
 def parse_llm_response(response: HttpResponse) -> StepResult:
-    """解析LLM响应，提取决策内容"""
+    """
+    将底层 HTTP 客户端返回的 LLM 响应规范化为 StepResult。
+
+    该函数是 Runner 的“协议收口层”，职责是把不同形态的上游响应
+    （HTTP 失败、空响应、tool_calls、thought/final 文本协议等）
+    统一映射为 StepResult，供主循环直接消费。
+
+    解析约定：
+    - 网络/HTTP 失败：返回 decision="final"，content 为可读错误摘要。
+    - 响应体非 JSON 对象：返回 decision="retry"，提示上层重试。
+    - 协议 type="tool_calls"：返回 decision="function_call"。
+    - 协议 type="thought"：返回 decision="thought"。
+    - 协议 type="final"：返回 decision="final"。
+    - 协议 type="retry"：返回 decision="retry"。
+    - 协议 type in {"question","observation"}：向后兼容，映射为 thought。
+    - 其他未知 type：返回 decision="retry" 说明协议错误（通常可重试）。
+
+    参数:
+    - response: HttpClient 返回的 HttpResponse。
+
+    返回:
+    - StepResult: 统一后的单步决策结果。
+    """
     from gaoagent.core.runner.HttpClient import HttpResponse
     from gaoagent.core.runner.BaseRunner import StepResult
 
@@ -250,13 +272,16 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
             raw={"response": repr(response)},
         )
 
+    # HTTP 层失败（非 2xx 或网络异常）直接终止当前步，并返回可诊断信息。
     if not response.ok:
         status_text = f"status={response.status}" if response.status is not None else "status=null"
         reason_text = response.reason or "unknown"
         body = response.text or (safe_json_dumps(response.json) if response.json is not None else "")
         content = f"LLM 请求失败：{status_text}, reason={reason_text}"
         if body:
+            # 错误体可能很长，避免污染终端与日志。
             content = f"{content}\n{truncate_text(body, 800)}"
+
         return StepResult(
             decision="final",
             content=content,
@@ -269,6 +294,7 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
             },
         )
 
+    # 优先使用已解析 JSON；若缺失则尝试从 text 二次反序列化。
     payload: dict[str, Any] | None = response.json if isinstance(response.json, dict) else None
     if payload is None and isinstance(response.text, str) and response.text.strip():
         try:
@@ -277,20 +303,23 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
             parsed = None
         payload = parsed if isinstance(parsed, dict) else None
 
+    # 上游返回空文本或非对象 JSON，视为可重试的临时协议异常。
     if payload is None:
         text = response.text or ""
         return StepResult(
-            decision="final",
+            decision="retry",
             content=truncate_text(text, 800) if text else "LLM 返回为空或不是 JSON 对象",
             raw={"http": {"ok": True, "status": response.status}, "text": text},
         )
 
     from gaoagent.core.runner.FunctionCallProtocol import map_chat_completion_to_protocol
 
+    # 统一协议映射：把 ChatCompletions payload 转成内部 protocol dict。
     protocol = map_chat_completion_to_protocol(payload)
     action_type = protocol.get("type") if isinstance(protocol, dict) else None
 
     if action_type == "tool_calls":
+        # 新协议：支持多 tool call；每个调用保留 name/arguments/tool_call_id。
         calls: list[dict[str, Any]] = []
         protocol_calls = protocol.get("calls")
         if isinstance(protocol_calls, list):
@@ -305,16 +334,6 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
                     call["tool_call_id"] = item.get("tool_call_id")
                 calls.append(call)
 
-        # 兼容旧格式（单 tool call）
-        if not calls:
-            fallback_call: dict[str, Any] = {
-                "name": protocol.get("name"),
-                "arguments": protocol.get("arguments", {}),
-            }
-            if isinstance(protocol.get("tool_call_id"), str):
-                fallback_call["tool_call_id"] = protocol.get("tool_call_id")
-            calls.append(fallback_call)
-
         return StepResult(
             decision="function_call",
             function_call=calls,
@@ -322,6 +341,7 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
         )
 
     if action_type == "thought":
+        # thought 允许 content 或 output，两者都缺失时回退为空字符串。
         content = protocol.get("content")
         if content is None:
             content = protocol.get("output")
@@ -334,6 +354,7 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
         )
 
     if action_type == "final":
+        # final 直接透传，交由上层作为本轮最终回答处理。
         content = protocol.get("content", "")
         return StepResult(
             decision="final",
@@ -341,7 +362,16 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
             raw={"payload": payload, "protocol": protocol},
         )
 
+    if action_type == "retry":
+        content = protocol.get("content", "")
+        return StepResult(
+            decision="retry",
+            content=str(content),
+            raw={"payload": payload, "protocol": protocol},
+        )
+
     if action_type in ("question", "observation"):
+        # 历史兼容：旧类型在当前执行器中按 thought 处理，不直接中断流程。
         content = protocol.get("content", "")
         return StepResult(
             decision="thought",
@@ -349,8 +379,9 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
             raw={"payload": payload, "protocol": protocol},
         )
 
+    # 未识别协议类型：按可重试错误处理，避免直接终止任务。
     return StepResult(
-        decision="final",
+        decision="retry",
         content=f"LLM 协议错误：未知 type={repr(action_type)}",
         raw={"payload": payload, "protocol": protocol},
     )

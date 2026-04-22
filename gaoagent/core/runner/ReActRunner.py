@@ -226,23 +226,11 @@ class ReActRunner(BaseRunner):
             step_result = parse_llm_response(response)
             last_step = step_result
 
-            if step_result.decision != "final":
-                return step_result
-
-            content = (step_result.content or "").strip()
-            should_retry = (
-                content == ""
-                or content == "LLM 未返回可执行 tool_call，也未返回文本结果"
-                or content.startswith("LLM 响应缺少 choices")
-                or content.startswith("LLM 响应缺少 message")
-                or content == "LLM 返回为空或不是 JSON 对象"
-            )
+            should_retry = step_result.decision == "retry"
             if not should_retry:
                 return step_result
 
             if attempt >= max_attempts:
-                if max_attempts <= 1:
-                    return step_result
                 break
 
             run_logger = get_current_run_logger()

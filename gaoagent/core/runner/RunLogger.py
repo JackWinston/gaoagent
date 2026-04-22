@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from gaoagent.core.runner.Utils import find_project_root
+from gaoagent.core.runner.Utils import project_config_dir
 
 
 class RunLogger:
@@ -48,8 +48,7 @@ def reset_current_run_logger(token) -> None:
 
 
 def create_run_logger() -> RunLogger:
-    project_root = find_project_root()
-    logs_dir = project_root / ".gaoagent" / "logs"
+    logs_dir = project_config_dir() / "logs"
     ts = datetime.now().strftime("%Y-%m-%d,%H:%M:%S")
     if os.name == "nt":
         ts = ts.replace(":", "-")

@@ -236,9 +236,14 @@ class CoreConfigDefault:
             "timeout": 60,
             "type": "stdio",
             "command": "npx",
-            "args": ["-y", "bing-cn-mcp"]
+            "args": ["-y", "bing-cn-mcp"],
+            "env": {"HTTP_PROXY": "http://127.0.0.1:7890"}
           }
         }
+
+        也支持：
+        - SSE: {"type":"sse","url":"https://...","headers":{...}}
+        - Streamable HTTP: {"type":"streamable_http","url":"https://...","headers":{...}}
         """
         if click.confirm("是否跳过 MCP 配置？", default=False):
             return None
@@ -397,23 +402,6 @@ class CoreConfigDefault:
                 return value
             click.echo("请输入正整数")
 
-    def _prompt_json_str_list(self, text: str) -> list[str]:
-        """
-        获取 JSON 字符串数组输入（例如 ["-y","bing-cn-mcp"]）；解析失败则提示并重新输入。
-        """
-        while True:
-            raw = click.prompt(text, type=str).strip()
-            try:
-                value = json.loads(raw)
-            except Exception:
-                click.echo("格式错误：请输入合法的 JSON 数组")
-                continue
-
-            if not isinstance(value, list) or any((not isinstance(x, str)) for x in value):
-                click.echo("格式错误：args 必须是字符串数组，例如 [\"-y\",\"bing-cn-mcp\"]")
-                continue
-
-            return value
 
     def _validate_mcp_config(self, config: dict[str, Any]) -> None:
         """
@@ -428,7 +416,7 @@ class CoreConfigDefault:
         if not isinstance(body, dict):
             raise ValueError("MCP 配置内容必须是对象")
 
-        required_keys = {"disabled", "timeout", "type", "command", "args"}
+        required_keys = {"disabled", "timeout", "type"}
         missing = required_keys - set(body.keys())
         if missing:
             raise ValueError(f"MCP 配置缺少字段：{sorted(missing)}")
@@ -437,9 +425,23 @@ class CoreConfigDefault:
             raise ValueError("MCP.disabled 必须为 bool")
         if not isinstance(body["timeout"], int) or body["timeout"] <= 0:
             raise ValueError("MCP.timeout 必须为正整数")
-        if body["type"] not in ("stdio",):
-            raise ValueError("MCP.type 目前仅支持 stdio")
-        if not isinstance(body["command"], str) or not body["command"].strip():
-            raise ValueError("MCP.command 必须为非空字符串")
-        if not isinstance(body["args"], list) or any((not isinstance(x, str)) for x in body["args"]):
-            raise ValueError("MCP.args 必须为字符串数组")
+        mcp_type = body["type"]
+        if mcp_type not in ("stdio", "sse", "streamable_http"):
+            raise ValueError("MCP.type 仅支持 stdio/sse/streamable_http")
+        if mcp_type == "stdio":
+            if not isinstance(body.get("command"), str) or not str(body.get("command")).strip():
+                raise ValueError("stdio MCP.command 必须为非空字符串")
+            args = body.get("args")
+            if not isinstance(args, list) or any((not isinstance(x, str)) for x in args):
+                raise ValueError("stdio MCP.args 必须为字符串数组")
+            env = body.get("env")
+            if env is not None:
+                if not isinstance(env, dict) or any((not isinstance(k, str) or not isinstance(v, str)) for k, v in env.items()):
+                    raise ValueError("stdio MCP.env 必须是 string->string 对象")
+            return
+        if not isinstance(body.get("url"), str) or not str(body.get("url")).strip():
+            raise ValueError(f"{mcp_type} MCP.url 必须为非空字符串")
+        headers = body.get("headers")
+        if headers is not None:
+            if not isinstance(headers, dict) or any((not isinstance(k, str) or not isinstance(v, str)) for k, v in headers.items()):
+                raise ValueError(f"{mcp_type} MCP.headers 必须是 string->string 对象")

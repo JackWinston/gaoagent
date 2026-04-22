@@ -6,10 +6,14 @@ import time
 import traceback
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
+import click
 
 if TYPE_CHECKING:
     from gaoagent.core.runner.HttpClient import HttpResponse
     from gaoagent.core.runner.BaseRunner import RequestBaseInfo, StepResult
+
+
+_PROJECTS_REGISTRY_FILENAME = "inited_projects.txt"
 
 
 def now_ms() -> int:
@@ -68,67 +72,73 @@ def normalize_exception(e: BaseException) -> dict[str, Any]:
     }
 
 
-def find_project_root(start: Path | None = None) -> Path:
-    p = (start or Path.cwd()).resolve()
-    for cur in (p, *p.parents):
-        if (cur / "pyproject.toml").exists():
-            return cur
-    return p
-
-
-def _config_dir() -> Path:
-    """
-    返回默认配置目录。
-
-    约定：
-    - 若设置环境变量 `GAOAGENT_CONFIG_DIR`，优先使用该目录（便于测试与沙箱运行）。
-    - 否则使用用户目录 `~/.gaoagent`。
-    """
-    override_dir = _env_config_dir()
-    if override_dir is not None:
-        return override_dir
+def __global_config_dir() -> Path:
     return Path.home() / ".gaoagent"
 
 
-def _env_config_dir() -> Path | None:
-    """解析环境变量覆盖目录；未设置时返回 None。"""
-    override = os.environ.get("GAOAGENT_CONFIG_DIR")
-    if override and override.strip():
-        return Path(override).expanduser().resolve()
-    return None
+def _project_registry_file() -> Path:
+    return __global_config_dir() / _PROJECTS_REGISTRY_FILENAME
 
 
-def _project_config_dir() -> Path:
-    """返回项目级配置目录 `<project_root>/.gaoagent`。"""
-    return find_project_root() / ".gaoagent"
+def _load_project_registry_paths() -> list[Path]:
+    registry_file = _project_registry_file()
+    if not registry_file.exists() or not registry_file.is_file():
+        return []
+    try:
+        lines = registry_file.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return []
+
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for line in lines:
+        raw = line.strip()
+        if not raw:
+            continue
+        try:
+            root = Path(raw).expanduser().resolve()
+        except Exception:
+            continue
+        key = str(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        roots.append(root)
+    return roots
+
+
+def project_config_dir() -> Path:
+    """返回项目根目录（其下需存在 `.gaoagent`）。"""
+    cwd = Path.cwd().resolve()
+    config_dir = cwd / ".gaoagent"
+    if config_dir.exists() and config_dir.is_dir():
+        return cwd
+
+    candidates: list[Path] = []
+    for root in _load_project_registry_paths():
+        config = root / ".gaoagent"
+        if not (root.exists() and root.is_dir() and config.exists() and config.is_dir()):
+            continue
+        if root == cwd or root in cwd.parents:
+            candidates.append(root)
+    if candidates:
+        candidates.sort(key=lambda p: len(p.parts), reverse=True)
+        return candidates[0]
+
+    click.echo("请先执行 gaoagent init 命令初始化项目")
+    raise RuntimeError(f"未检测到项目配置目录：{cwd / '.gaoagent'}")
+
 
 
 def _find_config_file(name: str) -> Path:
-    """
-    解析配置文件路径，按以下优先级查找：
-    1. `GAOAGENT_CONFIG_DIR` 指向的目录（用于测试隔离与临时覆盖）；
-    2. 项目级 `.gaoagent/`（便于仓库内固定配置）；
-    3. 用户级 `~/.gaoagent/`（全局默认）。
-
-    注意：该函数不保证路径一定存在，调用方需自行检查。
-    """
-    env_dir = _env_config_dir()
-    if env_dir is not None:
-        candidate = env_dir / name
-        if candidate.exists():
-            return candidate
-    project_dir = _project_config_dir()
-    candidate = project_dir / name
-    if candidate.exists():
-        return candidate
-    return _config_dir() / name
+    return project_config_dir() / ".gaoagent" / name
 
 
 def load_request_base_info() -> RequestBaseInfo | None:
     """加载请求基础信息, 包括 baseurl、api_key、默认 headers 等等"""
     from gaoagent.core.runner.BaseRunner import RequestBaseInfo
 
-    path = _config_dir() / "gao_client_api_config.json"
+    path = _find_config_file("gao_client_api_config.json")
     if not path.exists():
         return None
     try:
@@ -177,10 +187,6 @@ def load_mcp() -> dict[str, Any]:
     """
     读取 MCP server 配置并输出给 Prompt 注入层使用。
 
-    兼容两种历史格式：
-    - 新格式：`{"mcpServers": {...}}`
-    - 旧格式：`{"serverA": {...}, "serverB": {...}}`
-
     返回值仅保留可用服务（disabled != true），并做最小字段裁剪，
     避免把无关字段扩散到上层提示词。
     """
@@ -195,11 +201,9 @@ def load_mcp() -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {"available": False, "servers": []}
 
-    servers_payload: dict[str, Any] = {}
-    if isinstance(payload.get("mcpServers"), dict):
-        servers_payload = payload.get("mcpServers")
-    else:
-        servers_payload = payload
+    servers_payload = payload.get("mcpServers")
+    if not isinstance(servers_payload, dict):
+        return {"available": False, "servers": []}
 
     servers: list[dict[str, Any]] = []
     for name, body in servers_payload.items():
@@ -214,6 +218,8 @@ def load_mcp() -> dict[str, Any]:
                 "type": body.get("type"),
                 "command": body.get("command"),
                 "args": body.get("args"),
+                "url": body.get("url"),
+                "headers": body.get("headers"),
             }
         )
     servers.sort(key=lambda x: x.get("name") or "")
@@ -237,10 +243,8 @@ def load_mcp_servers_raw() -> dict[str, Any]:
         return {}
     if not isinstance(payload, dict):
         return {}
-    if isinstance(payload.get("mcpServers"), dict):
-        servers = payload.get("mcpServers")
-        return servers if isinstance(servers, dict) else {}
-    return payload
+    servers = payload.get("mcpServers")
+    return servers if isinstance(servers, dict) else {}
 
 
 def load_mcp_tools_cache() -> dict[str, Any] | None:
@@ -266,11 +270,9 @@ def write_mcp_tools_cache_for_current_scope(payload: dict[str, Any]) -> None:
     将 MCP 工具缓存写回当前生效配置作用域。
 
     规则：
-    - 若已存在 `gao_client_mcp_setting.json`，缓存写到同目录；
-    - 否则写到默认配置目录。
+    - 缓存统一写入项目级 `.gaoagent/` 目录。
     """
-    settings_path = _find_config_file("gao_client_mcp_setting.json")
-    cfg_dir = settings_path.parent if settings_path.exists() else _config_dir()
+    cfg_dir = project_config_dir() / ".gaoagent"
     cfg_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cfg_dir / "gao_client_mcp_tools_cache.json"
     tmp_path = cache_path.with_name(f"{cache_path.name}.tmp")
@@ -283,7 +285,7 @@ def write_mcp_tools_cache_for_current_scope(payload: dict[str, Any]) -> None:
 
 def load_skills() -> dict[str, Any]:
     """加载技能库配置"""
-    skills_dir = _config_dir() / "skills"
+    skills_dir = _find_config_file("skills").resolve()
     if not skills_dir.exists() or not skills_dir.is_dir():
         return {"available": False, "items": []}
 
@@ -350,7 +352,7 @@ def parse_skill_frontmatter(file_path: Path) -> dict[str, Any] | None:
 
 def load_rag() -> dict[str, Any]:
     """加载RAG索引配置"""
-    rag_dir = _config_dir() / "rag"
+    rag_dir = _find_config_file("rag").resolve()
     if not rag_dir.exists() or not rag_dir.is_dir():
         return {"available": False, "indexes": []}
 

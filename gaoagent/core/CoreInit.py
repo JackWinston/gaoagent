@@ -12,6 +12,8 @@ from gaoagent.mcp.MCPClientCompat import MCPStdioClientSync, build_mcp_tools_cac
 
 
 class CoreInit:
+    _PROJECTS_REGISTRY_FILENAME = "inited_projects.txt"
+
     def init(self) -> None:
         """
         初始化核心组件。
@@ -32,6 +34,13 @@ class CoreInit:
             click.echo(f"未检测到全局配置目录：{global_dir}")
             click.echo("请先运行：gaoagent config")
             return None
+        current_root = Path.cwd().resolve()
+        if current_root == Path.home().resolve():
+            click.echo("禁止在 ~/ 目录执行 gaoagent init，请进入具体项目目录后重试")
+            return None
+
+        registry_file = self._project_registry_file(global_dir)
+        self._cleanup_project_registry(registry_file)
 
         config_default = CoreConfigDefault()
         global_api_file = global_dir / "gao_client_api_config.json"
@@ -43,7 +52,7 @@ class CoreInit:
             click.echo("未加载到任何 API 配置，初始化失败")
             return None
 
-        project_dir = Path.cwd() / ".gaoagent"
+        project_dir = current_root / ".gaoagent"
         project_dir.mkdir(parents=True, exist_ok=True)
 
         (default_api, default_model) = self._prompt_default_api_and_model(apis)
@@ -88,7 +97,8 @@ class CoreInit:
 
         click.echo("RAG 初始化暂不实现（已跳过）")
 
-        self._ensure_gitignore_contains(Path.cwd(), ".gaoagent/")
+        self._ensure_gitignore_contains(current_root, ".gaoagent/")
+        self._register_project_root(registry_file, current_root)
 
         click.echo("初始化完成")
 
@@ -300,3 +310,62 @@ class CoreInit:
         gitignore.write_text(f"{content}{suffix}{entry}\n", encoding="utf-8")
         click.echo("已将 .gaoagent 写入 .gitignore")
         return None
+
+    def _project_registry_file(self, global_dir: Path) -> Path:
+        return global_dir / self._PROJECTS_REGISTRY_FILENAME
+
+    def _cleanup_project_registry(self, registry_file: Path) -> list[Path]:
+        existing = self._load_project_registry(registry_file)
+        valid: list[Path] = []
+        for root in existing:
+            config_dir = root / ".gaoagent"
+            if root.exists() and root.is_dir() and config_dir.exists() and config_dir.is_dir():
+                valid.append(root)
+        self._write_project_registry(registry_file, valid)
+        return valid
+
+    def _register_project_root(self, registry_file: Path, project_root: Path) -> None:
+        roots = self._cleanup_project_registry(registry_file)
+        normalized = project_root.resolve()
+        if normalized not in roots:
+            roots.append(normalized)
+            self._write_project_registry(registry_file, roots)
+
+    def _load_project_registry(self, registry_file: Path) -> list[Path]:
+        if not registry_file.exists() or not registry_file.is_file():
+            return []
+        try:
+            lines = registry_file.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            return []
+        paths: list[Path] = []
+        seen: set[str] = set()
+        for line in lines:
+            raw = line.strip()
+            if not raw:
+                continue
+            try:
+                p = Path(raw).expanduser().resolve()
+            except Exception:
+                continue
+            key = str(p)
+            if key in seen:
+                continue
+            seen.add(key)
+            paths.append(p)
+        return paths
+
+    def _write_project_registry(self, registry_file: Path, roots: list[Path]) -> None:
+        registry_file.parent.mkdir(parents=True, exist_ok=True)
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for root in roots:
+            key = str(root.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(key)
+        content = "\n".join(deduped)
+        if content:
+            content += "\n"
+        registry_file.write_text(content, encoding="utf-8")

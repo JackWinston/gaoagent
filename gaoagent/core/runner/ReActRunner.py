@@ -372,15 +372,11 @@ class ReActRunner(BaseRunner):
         tool_names = (
             self.runner_config.tools.list_names() if self.runner_config.tools else []
         )
-        # `_mcp_exported_map` 在 run() 开始阶段计算并缓存到实例上，避免每个 step 重算。
+        # 只使用 run() 阶段已确定的 MCP 工具映射，确保“模型可见工具集”
+        # 与“执行期可路由工具集”完全一致，避免出现 Unknown tool 偏差。
         mcp_exported_map = getattr(self, "_mcp_exported_map", None)
-        if (not isinstance(mcp_exported_map, dict)) or (isinstance(mcp_exported_map, dict) and not mcp_exported_map):
-            mcp_cache = load_mcp_tools_cache() or {}
-            mcp_exported_map = (
-                mcp_cache.get("exported_map")
-                if isinstance(mcp_cache.get("exported_map"), dict)
-                else {}
-            )
+        if not isinstance(mcp_exported_map, dict):
+            mcp_exported_map = {}
         all_tool_names = list(tool_names)
         if isinstance(mcp_exported_map, dict) and mcp_exported_map:
             all_tool_names += sorted([str(x) for x in mcp_exported_map.keys()])

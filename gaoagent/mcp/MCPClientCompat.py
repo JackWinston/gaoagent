@@ -12,7 +12,7 @@ import json
 import os
 import re
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -85,8 +85,11 @@ def _run_coro(coro: Any) -> Any:
 @dataclass(frozen=True)
 class MCPServerConfig:
     type: str
-    command: str
-    args: list[str]
+    command: str = ""
+    args: list[str] = field(default_factory=list)
+    env: dict[str, str] | None = None
+    url: str = ""
+    headers: dict[str, str] | None = None
     timeout: int | None = None
     disabled: bool = False
 
@@ -101,31 +104,74 @@ class MCPServerConfig:
             if t and re.fullmatch(r"[+-]?\d+", t):
                 timeout_value = int(t)
 
+        args_value = [str(x) for x in (payload.get("args") or []) if isinstance(x, (str, int, float))]
+        env_raw = payload.get("env")
+        env_value: dict[str, str] | None = None
+        if isinstance(env_raw, dict):
+            env_value = {}
+            for k, v in env_raw.items():
+                if isinstance(k, str) and isinstance(v, str):
+                    env_value[k] = v
+        headers_raw = payload.get("headers")
+        headers_value: dict[str, str] | None = None
+        if isinstance(headers_raw, dict):
+            headers_value = {}
+            for k, v in headers_raw.items():
+                if isinstance(k, str) and isinstance(v, str):
+                    headers_value[k] = v
+
         return MCPServerConfig(
             type=str(payload.get("type") or ""),
             command=str(payload.get("command") or ""),
-            args=[str(x) for x in (payload.get("args") or []) if isinstance(x, (str, int, float))],
+            args=args_value,
+            env=env_value,
+            url=str(payload.get("url") or ""),
+            headers=headers_value,
             timeout=timeout_value,
             disabled=bool(payload.get("disabled") is True),
         )
 
 
 class MCPStdioClientSync:
-    def __init__(self, *, server_name: str, command: str, args: list[str], timeout: int | None) -> None:
+    def __init__(
+        self,
+        *,
+        server_name: str,
+        transport_type: str,
+        command: str,
+        args: list[str],
+        env: dict[str, str] | None,
+        url: str,
+        headers: dict[str, str] | None,
+        timeout: int | None,
+    ) -> None:
         self.server_name = server_name
+        self.transport_type = transport_type
         self.command = command
         self.args = args
+        self.env = env
+        self.url = url
+        self.headers = headers
         self.timeout = timeout
 
     @staticmethod
     def from_config(*, server_name: str, config: dict[str, Any]) -> "MCPStdioClientSync":
         cfg = MCPServerConfig.from_dict(config)
-        if not cfg.command.strip():
+        transport_type = cfg.type.strip().lower()
+        if transport_type not in ("stdio", "sse", "streamable_http"):
+            raise ValueError(f"MCP server `{server_name}` 的 type 不受支持：{cfg.type}")
+        if transport_type == "stdio" and not cfg.command.strip():
             raise ValueError(f"MCP server `{server_name}` 缺少可执行 command")
+        if transport_type in ("sse", "streamable_http") and not cfg.url.strip():
+            raise ValueError(f"MCP server `{server_name}` 缺少 url")
         return MCPStdioClientSync(
             server_name=server_name,
+            transport_type=transport_type,
             command=cfg.command,
-            args=cfg.args,
+            args=(cfg.args or []),
+            env=cfg.env,
+            url=cfg.url,
+            headers=cfg.headers,
             timeout=cfg.timeout,
         )
 
@@ -136,9 +182,23 @@ class MCPStdioClientSync:
         返回结构与缓存结构对齐：name/description/inputSchema。
         """
         async def _inner() -> list[dict[str, Any]]:
-            (ClientSession, StdioServerParameters, stdio_client) = _import_sdk()
-            params = StdioServerParameters(command=self.command, args=self.args, env=None)
-            async with stdio_client(params) as (read_stream, write_stream):
+            (ClientSession, StdioServerParameters, stdio_client, sse_client, streamablehttp_client) = _import_sdk()
+            if self.transport_type == "stdio":
+                # 合并进程环境与用户配置，既支持额外变量，也不丢失 PATH 等基础变量。
+                merged_env = dict(os.environ)
+                if isinstance(self.env, dict):
+                    merged_env.update(self.env)
+                params = StdioServerParameters(command=self.command, args=self.args, env=merged_env)
+                transport = stdio_client(params)
+            elif self.transport_type == "sse":
+                timeout_seconds = float(self.timeout) if isinstance(self.timeout, int) and self.timeout > 0 else 5.0
+                transport = sse_client(self.url, headers=self.headers, timeout=timeout_seconds)
+            elif self.transport_type == "streamable_http":
+                timeout_seconds = float(self.timeout) if isinstance(self.timeout, int) and self.timeout > 0 else 30.0
+                transport = streamablehttp_client(self.url, headers=self.headers, timeout=timeout_seconds)
+            else:
+                raise ValueError(f"Unsupported MCP transport type: {self.transport_type}")
+            async with transport as (read_stream, write_stream):
                 async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
                     tools = await session.list_tools()
@@ -149,14 +209,28 @@ class MCPStdioClientSync:
     def call_tool(self, *, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """调用指定 MCP 工具并归一化返回值。"""
         async def _inner() -> dict[str, Any]:
-            (ClientSession, StdioServerParameters, stdio_client) = _import_sdk()
-            params = StdioServerParameters(command=self.command, args=self.args, env=None)
+            (ClientSession, StdioServerParameters, stdio_client, sse_client, streamablehttp_client) = _import_sdk()
+            if self.transport_type == "stdio":
+                # 合并进程环境与用户配置，既支持额外变量，也不丢失 PATH 等基础变量。
+                merged_env = dict(os.environ)
+                if isinstance(self.env, dict):
+                    merged_env.update(self.env)
+                params = StdioServerParameters(command=self.command, args=self.args, env=merged_env)
+                transport = stdio_client(params)
+            elif self.transport_type == "sse":
+                timeout_seconds = float(self.timeout) if isinstance(self.timeout, int) and self.timeout > 0 else 5.0
+                transport = sse_client(self.url, headers=self.headers, timeout=timeout_seconds)
+            elif self.transport_type == "streamable_http":
+                timeout_seconds = float(self.timeout) if isinstance(self.timeout, int) and self.timeout > 0 else 30.0
+                transport = streamablehttp_client(self.url, headers=self.headers, timeout=timeout_seconds)
+            else:
+                raise ValueError(f"Unsupported MCP transport type: {self.transport_type}")
             timeout_seconds = (
                 int(self.timeout)
                 if isinstance(self.timeout, int) and self.timeout > 0
                 else None
             )
-            async with stdio_client(params) as (read_stream, write_stream):
+            async with transport as (read_stream, write_stream):
                 async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
                     result = await session.call_tool(
@@ -229,11 +303,13 @@ def _import_sdk():
     try:
         from mcp import ClientSession, StdioServerParameters  # type: ignore
         from mcp.client.stdio import stdio_client  # type: ignore
+        from mcp.client.sse import sse_client  # type: ignore
+        from mcp.client.streamable_http import streamablehttp_client  # type: ignore
     except Exception as e:
         raise RuntimeError(
             "未安装可用 MCP SDK：请安装 `mcp`"
         ) from e
-    return (ClientSession, StdioServerParameters, stdio_client)
+    return (ClientSession, StdioServerParameters, stdio_client, sse_client, streamablehttp_client)
 
 
 def build_mcp_tools_cache_payload(

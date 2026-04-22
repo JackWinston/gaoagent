@@ -49,8 +49,8 @@ class TestMcpIntegration(unittest.TestCase):
 
     def test_utils_load_mcp_servers_raw_and_cache(self):
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["GAOAGENT_CONFIG_DIR"] = tmp
-            cfg_dir = Path(tmp)
+            project_root = Path(tmp) / "demo_project"
+            cfg_dir = project_root / ".gaoagent"
             cfg_dir.mkdir(parents=True, exist_ok=True)
             (cfg_dir / "gao_client_mcp_setting.json").write_text(
                 json.dumps(
@@ -75,18 +75,22 @@ class TestMcpIntegration(unittest.TestCase):
 
             from gaoagent.core.runner.Utils import load_mcp, load_mcp_servers_raw, load_mcp_tools_cache
 
-            raw = load_mcp_servers_raw()
-            self.assertIn("fetch", raw)
-            self.assertEqual(raw["fetch"]["command"], "uvx")
+            old_cwd = Path.cwd()
+            os.chdir(project_root)
+            try:
+                raw = load_mcp_servers_raw()
+                self.assertIn("fetch", raw)
+                self.assertEqual(raw["fetch"]["command"], "uvx")
 
-            public = load_mcp()
-            self.assertTrue(public.get("available"))
-            self.assertEqual(public["servers"][0]["name"], "fetch")
+                public = load_mcp()
+                self.assertTrue(public.get("available"))
+                self.assertEqual(public["servers"][0]["name"], "fetch")
 
-            cache = load_mcp_tools_cache()
-            self.assertIsInstance(cache, dict)
-            self.assertIn("exported_map", cache)
-        os.environ.pop("GAOAGENT_CONFIG_DIR", None)
+                cache = load_mcp_tools_cache()
+                self.assertIsInstance(cache, dict)
+                self.assertIn("exported_map", cache)
+            finally:
+                os.chdir(old_cwd)
 
     def test_build_function_specs_with_mcp(self):
         from gaoagent.core.runner.FunctionCallProtocol import build_function_specs
@@ -147,6 +151,114 @@ class TestMcpIntegration(unittest.TestCase):
             result = runner.run("hello")
         self.assertTrue(result.success)
         self.assertEqual(result.final_result, "ok")
+
+    def test_mcp_client_from_config_supports_sse_and_streamable_http(self):
+        from gaoagent.mcp.MCPClientCompat import MCPStdioClientSync
+
+        sse_client = MCPStdioClientSync.from_config(
+            server_name="sse_server",
+            config={
+                "type": "sse",
+                "url": "https://example.com/sse",
+                "timeout": 30,
+                "disabled": False,
+                "headers": {"Authorization": "Bearer x"},
+            },
+        )
+        self.assertEqual(sse_client.transport_type, "sse")
+        self.assertEqual(sse_client.url, "https://example.com/sse")
+
+        http_client = MCPStdioClientSync.from_config(
+            server_name="http_server",
+            config={
+                "type": "streamable_http",
+                "url": "https://example.com/mcp",
+                "timeout": 30,
+                "disabled": False,
+            },
+        )
+        self.assertEqual(http_client.transport_type, "streamable_http")
+        self.assertEqual(http_client.url, "https://example.com/mcp")
+
+    def test_mcp_client_from_config_supports_stdio_env(self):
+        from gaoagent.mcp.MCPClientCompat import MCPStdioClientSync
+
+        stdio_client = MCPStdioClientSync.from_config(
+            server_name="stdio_server",
+            config={
+                "type": "stdio",
+                "command": "npx",
+                "args": ["-y", "some-mcp"],
+                "env": {"HTTP_PROXY": "http://127.0.0.1:7890"},
+                "timeout": 30,
+                "disabled": False,
+            },
+        )
+        self.assertEqual(stdio_client.transport_type, "stdio")
+        self.assertEqual(stdio_client.command, "npx")
+        self.assertEqual(stdio_client.args, ["-y", "some-mcp"])
+        self.assertEqual(stdio_client.env, {"HTTP_PROXY": "http://127.0.0.1:7890"})
+
+    def test_core_config_validate_mcp_config_supports_http_types(self):
+        from gaoagent.core.CoreConfigDefault import CoreConfigDefault
+
+        validator = CoreConfigDefault()
+        validator._validate_mcp_config(
+            {
+                "demo-sse": {
+                    "disabled": False,
+                    "timeout": 30,
+                    "type": "sse",
+                    "url": "https://example.com/sse",
+                    "headers": {"Authorization": "Bearer token"},
+                }
+            }
+        )
+        validator._validate_mcp_config(
+            {
+                "demo-http": {
+                    "disabled": False,
+                    "timeout": 30,
+                    "type": "streamable_http",
+                    "url": "https://example.com/mcp",
+                }
+            }
+        )
+        validator._validate_mcp_config(
+            {
+                "demo-stdio": {
+                    "disabled": False,
+                    "timeout": 30,
+                    "type": "stdio",
+                    "command": "npx",
+                    "args": ["-y", "bing-cn-mcp"],
+                    "env": {"HTTP_PROXY": "http://127.0.0.1:7890"},
+                }
+            }
+        )
+        with self.assertRaises(ValueError):
+            validator._validate_mcp_config(
+                {
+                    "bad-http": {
+                        "disabled": False,
+                        "timeout": 30,
+                        "type": "streamable_http",
+                    }
+                }
+            )
+        with self.assertRaises(ValueError):
+            validator._validate_mcp_config(
+                {
+                    "bad-stdio-env": {
+                        "disabled": False,
+                        "timeout": 30,
+                        "type": "stdio",
+                        "command": "npx",
+                        "args": ["-y", "bing-cn-mcp"],
+                        "env": {"HTTP_PROXY": 7890},
+                    }
+                }
+            )
 
 if __name__ == "__main__":
     unittest.main()

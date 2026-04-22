@@ -67,7 +67,8 @@ class CoreConfigDefault:
         mcp_configs: dict[str, Any] = {}
         existing_mcp_payload = self._read_json(mcp_config_file)
         if isinstance(existing_mcp_payload, dict):
-            mcp_configs = existing_mcp_payload
+            if isinstance(existing_mcp_payload.get("mcpServers"), dict):
+                mcp_configs = existing_mcp_payload["mcpServers"]
 
         new_mcp_count = 0
         while True:
@@ -146,7 +147,7 @@ class CoreConfigDefault:
         """
         config_dir = self._ensure_config_dir()
         config_file = config_dir / "gao_client_mcp_setting.json"
-        self._write_json(config_file, mcp_configs)
+        self._write_json(config_file, {"mcpServers": mcp_configs})
 
     def _import_api_config(self) -> dict[str, Any] | None:
         """

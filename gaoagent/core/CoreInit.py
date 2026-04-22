@@ -52,7 +52,7 @@ class CoreInit:
         project_mcp_file = project_dir / "gao_client_mcp_setting.json"
         mcp_configs = self._load_global_mcp_configs(config_default, global_mcp_file)
         selected_mcp = self._prompt_select_mcp(mcp_configs)
-        self._write_json(project_mcp_file, selected_mcp)
+        self._write_json(project_mcp_file, {"mcpServers": selected_mcp})
         click.echo(f"已写入项目 MCP 配置：{project_mcp_file}")
 
         selected_skills = self._prompt_select_skills(config_default, global_skills_dir)
@@ -148,7 +148,8 @@ class CoreInit:
     def _load_global_mcp_configs(self, config_default: CoreConfigDefault, mcp_file: Path) -> dict[str, Any]:
         payload = config_default._read_json(mcp_file)
         if isinstance(payload, dict):
-            return payload
+            if isinstance(payload.get("mcpServers"), dict):
+                return payload["mcpServers"]
         return {}
 
     def _prompt_select_mcp(self, mcp_configs: dict[str, Any]) -> dict[str, Any]:

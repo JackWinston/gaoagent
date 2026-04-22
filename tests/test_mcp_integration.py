@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 class TestMcpIntegration(unittest.TestCase):
@@ -103,6 +104,49 @@ class TestMcpIntegration(unittest.TestCase):
         mcp_spec = [x for x in specs if x["function"]["name"] == exported_name][0]
         self.assertEqual(mcp_spec["function"]["description"], "Search")
         self.assertIn("query", mcp_spec["function"]["parameters"]["properties"])
+
+    def test_react_runner_filter_exported_map_by_enabled_servers(self):
+        from gaoagent.core.runner.ReActRunner import ReActRunner
+
+        exported_map = {
+            "mcp__project__a": {"server": "project", "tool": "a"},
+            "mcp__global__b": {"server": "global", "tool": "b"},
+            "mcp__bad__c": {"server": "", "tool": "c"},
+        }
+        enabled = {"project": {"disabled": False}}
+        filtered = ReActRunner._filter_exported_map_for_servers(exported_map, enabled)
+        self.assertEqual(set(filtered.keys()), {"mcp__project__a"})
+
+    def test_react_runner_ignores_all_disabled_mcp_servers(self):
+        from gaoagent.core.runner.BaseRunner import RequestBaseInfo, StepResult
+        from gaoagent.core.runner.ReActRunner import ReActRunner
+
+        runner = ReActRunner()
+        runner.request_base_info = RequestBaseInfo(baseurl="http://mock", api_key="mock", modules="mock")
+
+        with (
+            patch(
+                "gaoagent.core.runner.ReActRunner.load_mcp_servers_raw",
+                return_value={
+                    "fetch": {
+                        "disabled": True,
+                        "timeout": 60,
+                        "type": "stdio",
+                        "command": "uvx",
+                        "args": ["mcp-server-fetch"],
+                    }
+                },
+            ),
+            patch("gaoagent.core.runner.ReActRunner.load_mcp_tools_cache", return_value=None),
+            patch.object(
+                ReActRunner,
+                "_callLLM",
+                return_value=StepResult(decision="final", content="ok"),
+            ),
+        ):
+            result = runner.run("hello")
+        self.assertTrue(result.success)
+        self.assertEqual(result.final_result, "ok")
 
 if __name__ == "__main__":
     unittest.main()

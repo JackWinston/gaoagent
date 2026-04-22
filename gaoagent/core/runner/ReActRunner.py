@@ -17,6 +17,7 @@ from gaoagent.core.runner.Utils import (
     load_mcp_tools_cache,
     parse_llm_response,
     safe_json_dumps,
+    write_mcp_tools_cache_for_current_scope,
 )
 from gaoagent.core.runner.PromptBuilder import build_system_prompt
 from gaoagent.core.runner.FunctionCallProtocol import build_function_specs
@@ -25,6 +26,40 @@ from gaoagent.mcp.MCPClientCompat import MCPStdioClientSync, build_mcp_tools_cac
 
 
 class ReActRunner(BaseRunner):
+    @staticmethod
+    def _enabled_mcp_servers(mcp_servers_raw: dict[str, Any] | None) -> dict[str, Any]:
+        enabled: dict[str, Any] = {}
+        if not isinstance(mcp_servers_raw, dict):
+            return enabled
+        for server_name, body in mcp_servers_raw.items():
+            if not isinstance(server_name, str) or not isinstance(body, dict):
+                continue
+            if body.get("disabled") is True:
+                continue
+            enabled[server_name] = body
+        return enabled
+
+    @staticmethod
+    def _filter_exported_map_for_servers(
+        exported_map: dict[str, Any] | None,
+        mcp_servers: dict[str, Any],
+    ) -> dict[str, Any]:
+        filtered: dict[str, Any] = {}
+        if not isinstance(exported_map, dict):
+            return filtered
+        valid_servers = set(mcp_servers.keys())
+        for exported_name, meta in exported_map.items():
+            if not isinstance(exported_name, str) or not isinstance(meta, dict):
+                continue
+            server = meta.get("server")
+            tool = meta.get("tool")
+            if not isinstance(server, str) or server not in valid_servers:
+                continue
+            if not isinstance(tool, str) or not tool.strip():
+                continue
+            filtered[exported_name] = meta
+        return filtered
+
     def __init__(
         self,
         *,
@@ -54,15 +89,26 @@ class ReActRunner(BaseRunner):
         # 1) 优先读取配置阶段写入的工具缓存（最快、最稳定）。
         # 2) 若缓存缺失但存在 mcpServers，则在运行时临时拉取一次工具清单作为兜底。
         #    这样即便用户忘记重新执行 config，也能在本次运行中使用 MCP 工具。
-        mcp_servers_raw = load_mcp_servers_raw()
+        mcp_servers_all = load_mcp_servers_raw()
+        mcp_servers_raw = self._enabled_mcp_servers(mcp_servers_all)
         mcp_cache = load_mcp_tools_cache() or {}
-        mcp_exported_map = (
+        cached_exported_map = (
             mcp_cache.get("exported_map")
             if isinstance(mcp_cache.get("exported_map"), dict)
             else {}
         )
+        mcp_exported_map = self._filter_exported_map_for_servers(cached_exported_map, mcp_servers_raw)
         mcp_discovery_errors: dict[str, str] = {}
-        if (not mcp_exported_map) and isinstance(mcp_servers_raw, dict) and mcp_servers_raw:
+        configured_servers = set(mcp_servers_raw.keys())
+        mapped_servers = {
+            meta.get("server")
+            for meta in mcp_exported_map.values()
+            if isinstance(meta, dict) and isinstance(meta.get("server"), str)
+        }
+        need_discovery = bool(configured_servers) and (
+            (not mcp_exported_map) or (mapped_servers != configured_servers)
+        )
+        if need_discovery and isinstance(mcp_servers_raw, dict) and mcp_servers_raw:
             try:
                 payload = build_mcp_tools_cache_payload(
                     mcp_servers_raw,
@@ -77,6 +123,7 @@ class ReActRunner(BaseRunner):
                     if isinstance(payload.get("exported_map"), dict)
                     else {}
                 )
+                mcp_exported_map = self._filter_exported_map_for_servers(mcp_exported_map, mcp_servers_raw)
                 servers_payload = (
                     payload.get("servers")
                     if isinstance(payload.get("servers"), dict)
@@ -88,6 +135,8 @@ class ReActRunner(BaseRunner):
                             error = server_body.get("error")
                             if isinstance(error, str) and error.strip():
                                 mcp_discovery_errors[server_name] = error
+                if mcp_exported_map:
+                    write_mcp_tools_cache_for_current_scope(payload)
             except Exception:
                 mcp_exported_map = {}
                 mcp_discovery_errors["_runtime"] = "build_mcp_tools_cache_payload failed"

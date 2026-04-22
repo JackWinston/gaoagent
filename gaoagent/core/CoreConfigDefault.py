@@ -32,8 +32,6 @@ class CoreConfigDefault:
            d. 添加 RAG 配置并命名（创建 rag/；每个知识库独立子目录；调用三方库切片并写入向量库）。
            e. 每完成一步,都写入最终 config.json。
         """
-        self._ensure_config_dir()
-
         config_dir = self._ensure_config_dir()
         api_config_file = config_dir / "gao_client_api_config.json"
         mcp_config_file = config_dir / "gao_client_mcp_setting.json"

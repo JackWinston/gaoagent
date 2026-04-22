@@ -5,8 +5,10 @@ from typing import Any
 import click
 import json
 import shutil
+import datetime
 
 from gaoagent.core.CoreConfigDefault import CoreConfigDefault
+from gaoagent.mcp.MCPClientCompat import MCPStdioClientSync, build_mcp_tools_cache_payload
 
 
 class CoreInit:
@@ -54,6 +56,22 @@ class CoreInit:
         selected_mcp = self._prompt_select_mcp(mcp_configs)
         self._write_json(project_mcp_file, {"mcpServers": selected_mcp})
         click.echo(f"已写入项目 MCP 配置：{project_mcp_file}")
+        project_mcp_cache_file = project_dir / "gao_client_mcp_tools_cache.json"
+        if selected_mcp:
+            try:
+                cache_payload = build_mcp_tools_cache_payload(
+                    selected_mcp,
+                    connect_and_list_tools=lambda name, body: MCPStdioClientSync.from_config(
+                        server_name=name,
+                        config=body,
+                    ).list_tools(),
+                    generated_at=datetime.datetime.now(datetime.UTC).isoformat(),
+                )
+                self._write_json(project_mcp_cache_file, cache_payload)
+                tool_count = len((cache_payload.get("exported_map") or {}).keys())
+                click.echo(f"已写入项目 MCP 工具缓存：{project_mcp_cache_file}（{tool_count} 个工具）")
+            except Exception as e:
+                click.echo(f"项目 MCP 工具缓存生成失败：{e}")
 
         selected_skills = self._prompt_select_skills(config_default, global_skills_dir)
         if selected_skills:

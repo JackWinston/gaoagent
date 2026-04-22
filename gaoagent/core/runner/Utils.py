@@ -261,6 +261,26 @@ def load_mcp_tools_cache() -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def write_mcp_tools_cache_for_current_scope(payload: dict[str, Any]) -> None:
+    """
+    将 MCP 工具缓存写回当前生效配置作用域。
+
+    规则：
+    - 若已存在 `gao_client_mcp_setting.json`，缓存写到同目录；
+    - 否则写到默认配置目录。
+    """
+    settings_path = _find_config_file("gao_client_mcp_setting.json")
+    cfg_dir = settings_path.parent if settings_path.exists() else _config_dir()
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = cfg_dir / "gao_client_mcp_tools_cache.json"
+    tmp_path = cache_path.with_name(f"{cache_path.name}.tmp")
+    tmp_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    tmp_path.replace(cache_path)
+
+
 def load_skills() -> dict[str, Any]:
     """加载技能库配置"""
     skills_dir = _config_dir() / "skills"

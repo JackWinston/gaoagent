@@ -107,7 +107,7 @@ def _load_project_registry_paths() -> list[Path]:
     return roots
 
 
-def project_config_dir() -> Path:
+def project_root_dir() -> Path:
     """返回项目根目录（其下需存在 `.gaoagent`）。"""
     cwd = Path.cwd().resolve()
     config_dir = cwd / ".gaoagent"
@@ -128,10 +128,13 @@ def project_config_dir() -> Path:
     click.echo("请先执行 gaoagent init 命令初始化项目")
     raise RuntimeError(f"未检测到项目配置目录：{cwd / '.gaoagent'}")
 
+def project_config_dir() -> Path:
+    """返回项目配置目录。"""
+    return project_root_dir() / ".gaoagent"
 
 
 def _find_config_file(name: str) -> Path:
-    return project_config_dir() / ".gaoagent" / name
+    return project_config_dir() / name
 
 
 def load_request_base_info() -> RequestBaseInfo | None:
@@ -272,7 +275,7 @@ def write_mcp_tools_cache_for_current_scope(payload: dict[str, Any]) -> None:
     规则：
     - 缓存统一写入项目级 `.gaoagent/` 目录。
     """
-    cfg_dir = project_config_dir() / ".gaoagent"
+    cfg_dir = project_config_dir()
     cfg_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cfg_dir / "gao_client_mcp_tools_cache.json"
     tmp_path = cache_path.with_name(f"{cache_path.name}.tmp")

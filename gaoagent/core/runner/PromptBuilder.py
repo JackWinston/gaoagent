@@ -18,9 +18,9 @@ def build_system_prompt(tool_names: list[str], mode: Mode) -> str:
     if mode == "react":
         return build_react_system_text(tool_names=tool_names, injections=injections)
     elif mode == "plan":
-        return build_plan_system_text(tool_names=tool_names, injections=injections)
+        return build_react_system_text(tool_names=tool_names, injections=injections)
     elif mode == "retry":
-        return build_retry_system_text(tool_names=tool_names, injections=injections)
+        return build_react_system_text(tool_names=tool_names, injections=injections)
 
 
 def build_react_system_text(
@@ -72,46 +72,6 @@ def build_react_system_text(
     }
     return base_prompt + json.dumps(resources, ensure_ascii=False)
 
-
-def build_plan_system_text(
-    *, tool_names: list[str] | None, injections: dict[str, Any]
-) -> str:
-    """任务规划器系统提示词（标准化）"""
-    base_prompt = """你是一个任务规划器。
-【强制规则】
-1. 仅输出JSON数组，禁止任何额外内容
-2. 输出格式三选一：
-   - 调用工具：{"type":"tool","name":"工具名","arguments":{}}
-   - 最终答案：{"type":"final","content":"答案"}
-【资源配置】"""
-
-    resources = {
-        "tools": tool_names,
-        "mcp": injections.get("mcp"),
-        "skills": injections.get("skills"),
-        "rag": injections.get("rag"),
-    }
-    return base_prompt + json.dumps(resources, ensure_ascii=False)
-
-
-def build_retry_system_text(
-    *, tool_names: list[str] | None, injections: dict[str, Any]
-) -> str:
-    """重试反思器系统提示词（标准化）"""
-    base_prompt = """你是一个重试反思器。
-【强制规则】
-1. 仅输出JSON对象，禁止任何额外内容
-2. 必填字段：strategy（重试策略）
-3. 可选字段：memory_patch（记忆补丁）、note（备注）
-【资源配置】"""
-
-    resources = {
-        "tools": tool_names,
-        "mcp": injections.get("mcp"),
-        "skills": injections.get("skills"),
-        "rag": injections.get("rag"),
-    }
-    return base_prompt + json.dumps(resources, ensure_ascii=False)
 
 
 def _collect_injections() -> dict[str, Any]:

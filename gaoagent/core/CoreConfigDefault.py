@@ -10,6 +10,7 @@ from gaoagent.mcp.MCPClientCompat import (
     build_mcp_tools_cache_payload,
     write_mcp_tools_cache,
 )
+from gaoagent.core.runner.Utils import scan_skills_metadata
 
 
 class CoreConfigDefault:
@@ -294,92 +295,7 @@ class CoreConfigDefault:
         return False
         
     def _load_skills_metadata(self, skills_dir: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-        skills: list[dict[str, str]] = []
-        invalid_skills: list[dict[str, str]] = []
-        if not skills_dir.exists() or not skills_dir.is_dir():
-            return (skills, invalid_skills)
-
-        for file_path in skills_dir.rglob("*"):
-            if not file_path.is_file():
-                continue
-            if file_path.name.lower() != "skill.md":
-                continue
-
-            (meta, reason) = self._parse_skill_frontmatter(file_path)
-            if meta is not None:
-                skills.append(meta)
-                continue
-            if reason:
-                invalid_skills.append({"path": str(file_path), "reason": reason})
-
-        skills.sort(key=lambda x: x["name"])
-        return (skills, invalid_skills)
-
-    def _parse_skill_frontmatter(self, file_path: Path) -> tuple[dict[str, str] | None, str | None]:
-        try:
-            content = file_path.read_text(encoding="utf-8")
-        except Exception as e:
-            return (None, f"读取失败：{e}")
-
-        lines = content.splitlines()
-        if not lines or lines[0].strip() != "---":
-            return (None, "缺少 YAML frontmatter 起始标记 ---")
-
-        i = 1
-        frontmatter: list[str] = []
-        while i < len(lines):
-            if lines[i].strip() == "---":
-                break
-            frontmatter.append(lines[i])
-            i += 1
-        if i >= len(lines) or lines[i].strip() != "---":
-            return (None, "缺少 YAML frontmatter 结束标记 ---")
-
-        name: str | None = None
-        description: str | None = None
-        j = 0
-        while j < len(frontmatter):
-            line = frontmatter[j].rstrip("\n")
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                j += 1
-                continue
-
-            if stripped.startswith("name:"):
-                name_val = stripped.split(":", 1)[1].strip()
-                name = name_val.strip('"').strip("'")
-                j += 1
-                continue
-
-            if stripped.startswith("description:"):
-                desc_val = stripped.split(":", 1)[1].strip()
-                if desc_val in (">", ">-", "|", "|-"):
-                    j += 1
-                    block: list[str] = []
-                    while j < len(frontmatter):
-                        nxt = frontmatter[j]
-                        if nxt.strip() and not nxt.startswith((" ", "\t")):
-                            break
-                        block.append(nxt.lstrip())
-                        j += 1
-                    description = " ".join(" ".join(block).split()).strip()
-                    continue
-
-                description = desc_val.strip('"').strip("'")
-                j += 1
-                continue
-
-            j += 1
-
-        if not name or not description:
-            missing: list[str] = []
-            if not name:
-                missing.append("name")
-            if not description:
-                missing.append("description")
-            return (None, f"缺少字段 {', '.join(missing)}")
-
-        return ({"name": name, "description": description}, None)
+        return scan_skills_metadata(skills_dir)
 
     
     def _prompt_non_empty_str(self, text: str, *, hide_input: bool = False) -> str:

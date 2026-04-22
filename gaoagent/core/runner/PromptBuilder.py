@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
+import time
 import os
 import platform
 from typing import Any
 from gaoagent.core.runner.BaseRunner import Mode
-from gaoagent.core.runner.Utils import load_mcp, load_rag, load_skills, project_root_dir
+from gaoagent.core.runner.Utils import load_skills, project_root_dir
 
 
 def build_system_prompt(tool_names: list[str], mode: Mode) -> str:
@@ -14,26 +14,22 @@ def build_system_prompt(tool_names: list[str], mode: Mode) -> str:
     完整支持ReAct多轮推理、上下文记忆、工具调用
     """
 
-    injections = _collect_injections()
-
     # 生成对应模式的系统提示词
     if mode == "react":
-        return build_react_system_text(tool_names=tool_names, injections=injections)
+        return build_react_system_text(tool_names=tool_names)
     elif mode == "plan":
-        return build_react_system_text(tool_names=tool_names, injections=injections)
+        return build_react_system_text(tool_names=tool_names)
     elif mode == "retry":
-        return build_react_system_text(tool_names=tool_names, injections=injections)
+        return build_react_system_text(tool_names=tool_names)
 
 
-def build_react_system_text(
-    *, tool_names: list[str] | None, injections: dict[str, Any]
-) -> str:
+def build_react_system_text( *, tool_names: list[str] | None) -> str:
     available_tools = tool_names or []
     tool_line = " | ".join(available_tools) if available_tools else "无可用工具"
 
     base_prompt = f"""
 
-你是一个严格遵循 ReAct 范式的智能代理（ReAct Agent），**优先使用自身知识库解答问题，仅在必要时调用工具**，杜绝无意义、重复的工具调用，避免Token浪费。
+你是一个严格遵循 ReAct 范式的智能代理（ReAct Agent），**优先使用自身知识库解答问题，仅在必要时调用工具**。
 
 【目标】
 逐步解决用户问题：thought -> tool_calls -> tool_calls result -> thought ... -> final。
@@ -62,30 +58,24 @@ def build_react_system_text(
 
 【Skill 使用规则（按需加载）】
 当且仅当用户任务与某个 Skill 高度相关时，才按需读取对应的 SKILL.md 正文。
-以下是 Skill 索引：{injections.get("skills")}。
+以下是 Skill 索引：
+{_getSkillStr()}
 
 
 【可用工具】
 {tool_line}
 
-【资源配置】
+【系统信息】
+OS : {os.name}
+Platform : {platform.platform()}
+Python Version : {platform.python_version()}
+当前时间 : {time.strftime("%Y-%m-%d %H:%M:%S %Z", time.localtime())}
+
+【当前项目目录】
+{_resolve_project_root_for_prompt()}
+
 """
-
-    resources = {
-        "system_info": injections.get("system_info"),
-        "project_root": injections.get("project_root"),
-        "rag": injections.get("rag"),
-    }
-    return base_prompt + json.dumps(resources, ensure_ascii=False)
-
-
-def _build_system_info() -> dict[str, Any]:
-    return {
-        "os": os.name,
-        "platform": platform.platform(),
-        "python_version": platform.python_version(),
-        "cwd": str(os.getcwd()),
-    }
+    return base_prompt
 
 
 def _resolve_project_root_for_prompt() -> str:
@@ -95,36 +85,27 @@ def _resolve_project_root_for_prompt() -> str:
         return str(os.getcwd())
 
 
-def _build_skill_index(raw_skills: dict[str, Any] | None) -> dict[str, Any]:
+def _getSkillStr() -> str:
+    raw_skills = load_skills()
     if not isinstance(raw_skills, dict):
-        return {"available": False, "items": []}
-
+        return ""
     items = raw_skills.get("items")
     if not isinstance(items, list):
-        return {"available": bool(raw_skills.get("available")), "items": []}
-
-    indexed_items: list[dict[str, Any]] = []
+        return ""
+    result: list[str] = []
+    index = 1
     for item in items:
         if not isinstance(item, dict):
             continue
-        indexed_items.append(
-            {
-                "name": item.get("name"),
-                "description": item.get("description"),
-                "path": item.get("path"),
-            }
+        result.append(
+            f"""
+{index}. {item.get("name")}
+  name : {item.get("name")}
+  description : {item.get("description")}
+  path : {item.get("path")}
+
+     """
         )
+        index += 1
 
-    return {"available": bool(raw_skills.get("available")), "items": indexed_items}
-
-
-
-def _collect_injections() -> dict[str, Any]:
-    """收集资源注入配置（MCP/RAG/Skills）"""
-    out: dict[str, Any] = {}
-    out["mcp"] = load_mcp()
-    out["skills"] = _build_skill_index(load_skills())
-    out["rag"] = load_rag()
-    out["system_info"] = _build_system_info()
-    out["project_root"] = _resolve_project_root_for_prompt()
-    return out
+    return "".join(result)

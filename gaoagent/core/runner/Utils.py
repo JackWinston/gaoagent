@@ -292,71 +292,123 @@ def load_skills() -> dict[str, Any]:
     if not skills_dir.exists() or not skills_dir.is_dir():
         return {"available": False, "items": []}
 
+    (skills, _) = scan_skills_metadata(skills_dir)
     items: list[dict[str, Any]] = []
-    for file_path in skills_dir.rglob("*"):
-        if not file_path.is_file() or file_path.name.lower() != "skill.md":
-            continue
-        meta = parse_skill_frontmatter(file_path)
-        if meta:
-            meta["path"] = str(file_path)
-            body = meta.get("body", "")
-            if body and len(body) > 20000:
-                meta["body"] = body[:20000] + "\n...[Content Truncated]..."
-            items.append(meta)
-
-    items.sort(key=lambda x: x.get("name") or "")
+    for item in skills:
+        items.append(
+            {
+                "name": item.get("name"),
+                "description": item.get("description"),
+                "path": item.get("path"),
+            }
+        )
     return {"available": True, "items": items}
 
 
 def parse_skill_frontmatter(file_path: Path) -> dict[str, Any] | None:
-    """解析Skill.md的前置元数据及正文"""
+    """解析 Skill.md frontmatter，返回 name/description。"""
+    (meta, _) = parse_skill_frontmatter_with_reason(file_path)
+    return meta
+
+
+def parse_skill_frontmatter_with_reason(file_path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    """解析 Skill.md frontmatter，失败时返回原因。"""
     try:
         content = file_path.read_text(encoding="utf-8")
-    except Exception:
-        return None
+    except Exception as e:
+        return (None, f"读取失败：{e}")
 
     lines = content.splitlines()
     if not lines or lines[0].strip() != "---":
-        return None
+        return (None, "缺少 YAML frontmatter 起始标记 ---")
 
-    # 提取前置元数据
-    frontmatter = []
+    frontmatter: list[str] = []
     i = 1
     while i < len(lines):
         if lines[i].strip() == "---":
             break
         frontmatter.append(lines[i])
         i += 1
-    else:
-        return None
-
-    body_lines = lines[i+1:]
-    body = "\n".join(body_lines).strip()
+    if i >= len(lines) or lines[i].strip() != "---":
+        return (None, "缺少 YAML frontmatter 结束标记 ---")
 
     name = description = None
     j = 0
     while j < len(frontmatter):
-        line = frontmatter[j].strip()
-        if not line or line.startswith("#"):
+        line = frontmatter[j].rstrip("\n")
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
             j += 1
             continue
 
-        if line.startswith("name:"):
-            name = line.split(":", 1)[1].strip().strip("\"'")
-        elif line.startswith("description:"):
-            desc_val = line.split(":", 1)[1].strip()
+        if stripped.startswith("name:"):
+            name = stripped.split(":", 1)[1].strip().strip("\"'")
+            j += 1
+            continue
+
+        if stripped.startswith("description:"):
+            desc_val = stripped.split(":", 1)[1].strip()
             if desc_val in (">", ">-", "|", "|-"):
                 j += 1
-                block = []
-                while j < len(frontmatter) and not frontmatter[j].strip():
-                    block.append(frontmatter[j].lstrip())
+                block: list[str] = []
+                while j < len(frontmatter):
+                    nxt = frontmatter[j]
+                    if nxt.strip():
+                        indent = len(nxt) - len(nxt.lstrip(" \t"))
+                        if indent == 0:
+                            break
+                    block.append(nxt.lstrip())
                     j += 1
                 description = " ".join(" ".join(block).split()).strip()
+                continue
             else:
                 description = desc_val.strip("\"'")
+                j += 1
+                continue
         j += 1
 
-    return {"name": name, "description": description, "body": body} if name and description else None
+    if not name or not description:
+        missing: list[str] = []
+        if not name:
+            missing.append("name")
+        if not description:
+            missing.append("description")
+        return (None, f"缺少字段 {', '.join(missing)}")
+    return ({"name": name, "description": description}, None)
+
+
+def scan_skills_metadata(skills_dir: Path) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """
+    扫描 skills 目录并做统一解析（尽力加载，不做规范性校验）：
+    - 若 frontmatter 可解析，使用其 name/description；
+    - 若不可解析，回退为目录名 + 空 description。
+    """
+    skills: list[dict[str, Any]] = []
+    invalid_skills: list[dict[str, str]] = []
+    if not skills_dir.exists() or not skills_dir.is_dir():
+        return (skills, invalid_skills)
+
+    for file_path in skills_dir.rglob("*"):
+        if not file_path.is_file() or file_path.name.lower() != "skill.md":
+            continue
+        (meta, reason) = parse_skill_frontmatter_with_reason(file_path)
+        if meta is None:
+            # 尽力加载：解析失败时不拦截，仍提供可用的最小元数据。
+            meta = {"name": file_path.parent.name, "description": ""}
+            invalid_skills.append(
+                {"path": str(file_path), "reason": reason or "解析失败"})
+        else:
+            skills.append(
+            {
+                "name": str(meta["name"]),
+                "description": str(meta["description"]),
+                "path": str(file_path),
+                "src_dir": file_path.parent,
+            }
+        )
+
+    skills.sort(key=lambda x: str(x.get("name") or ""))
+    return (skills, invalid_skills)
 
 
 def load_rag() -> dict[str, Any]:

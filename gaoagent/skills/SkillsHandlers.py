@@ -6,7 +6,7 @@ from typing import Any
 
 import click
 
-from gaoagent.core.runner.Utils import parse_skill_frontmatter
+from gaoagent.core.runner.Utils import scan_skills_metadata
 
 
 class SkillsHandlers:
@@ -53,17 +53,20 @@ class SkillsHandlers:
             click.echo(f"{i}. {s['name']} - {s.get('description', '')}")
             
         if name and name in names:
-            selected = [name]
+            selected_names = [name]
         else:
-            selected = self._prompt_multi_select("请选择要安装的 Skill（输入序号或名称，逗号分隔；回车跳过；输入 all 选择全部）", names)
+            selected_names = self._prompt_multi_select("请选择要安装的 Skill（输入序号或名称，逗号分隔；回车跳过；输入 all 选择全部）", names)
         
-        if not selected:
+        if not selected_names:
             return
             
         project_skills_dir.mkdir(parents=True, exist_ok=True)
+        selected_set = set(selected_names)
+        selected_items = [item for item in global_skills if item["name"] in selected_set]
         installed_count = 0
-        for skill_name in selected:
-            src = global_dir / skill_name
+        for item in selected_items:
+            skill_name = item["name"]
+            src = Path(item["src_dir"])
             dst = project_skills_dir / skill_name
             if dst.exists():
                 click.echo(f"Skill '{skill_name}' 已存在，跳过。")
@@ -92,8 +95,15 @@ class SkillsHandlers:
             
         if not target:
             return
-            
-        target_dir = skills_dir / target
+
+        target_dir: Path | None = None
+        for item in skills:
+            if item["name"] == target:
+                target_dir = Path(item["src_dir"])
+                break
+        if target_dir is None:
+            target_dir = skills_dir / target
+
         if target_dir.exists():
             shutil.rmtree(target_dir)
 
@@ -164,16 +174,12 @@ class SkillsHandlers:
     def _get_skills_in_dir(self, skills_dir: Path) -> list[dict[str, Any]]:
         if not skills_dir.exists() or not skills_dir.is_dir():
             return []
-            
-        skills = []
-        for file_path in skills_dir.rglob("*"):
-            if not file_path.is_file() or file_path.name.lower() != "skill.md":
-                continue
-            meta = parse_skill_frontmatter(file_path)
-            if meta:
-                skills.append(meta)
-                
-        skills.sort(key=lambda x: x.get("name", ""))
+
+        (skills, invalid_skills) = scan_skills_metadata(skills_dir)
+        if invalid_skills:
+            click.echo(f"发现不符合规范的 Skill 文件，共 {len(invalid_skills)} 个：")
+            for item in invalid_skills:
+                click.echo(f"- {item['path']}: {item['reason']}")
         return skills
 
     def _prompt_skill_name(self, skills: list[dict[str, Any]], *, action: str) -> str | None:

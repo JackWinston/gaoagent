@@ -201,18 +201,11 @@ class CoreInit:
             click.echo(f"未检测到全局 Skills 目录：{skills_dir}（已跳过）")
             return []
 
-        skills: list[dict[str, Any]] = []
-        for file_path in skills_dir.rglob("*"):
-            if not file_path.is_file():
-                continue
-            if file_path.name.lower() != "skill.md":
-                continue
-
-            (meta, _) = config_default._parse_skill_frontmatter(file_path)
-            if meta is None:
-                continue
-            meta_name = meta["name"]
-            skills.append({"name": meta_name, "description": meta["description"], "src_dir": file_path.parent})
+        (skills, invalid_skills) = config_default._load_skills_metadata(skills_dir)
+        if invalid_skills:
+            click.echo(f"以下 SKILL.md 不符合规范，共 {len(invalid_skills)} 个：")
+            for item in invalid_skills:
+                click.echo(f"- {item['path']}: {item['reason']}")
 
         if not skills:
             click.echo("未加载到任何 Skill（已跳过）")

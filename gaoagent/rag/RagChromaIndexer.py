@@ -568,42 +568,6 @@ class RagChromaIndexer:
         except Exception as e:
             return (False, str(e))
 
-    def _check_vector_store_health_with_retry(
-        self,
-        *,
-        store_dir: Path,
-        collection_name: str,
-        expect_min_count: int,
-        probe_ids: list[str] | None = None,
-        max_retries: int = 5,
-        retry_interval_sec: float = 1.0,
-    ) -> tuple[bool, str]:
-        """
-        健康检查重试包装。
-
-        默认最多重试 5 次（共执行 5 次检查），仍失败则返回最后一次错误。
-        """
-        attempts = max(1, max_retries)
-        last_reason = ""
-        for attempt in range(1, attempts + 1):
-            (ok, reason) = self._check_vector_store_health(
-                store_dir=store_dir,
-                collection_name=collection_name,
-                expect_min_count=expect_min_count,
-                probe_ids=probe_ids,
-            )
-            if ok:
-                if attempt > 1:
-                    print(f"[RAG] 向量库健康检查通过（第 {attempt}/{attempts} 次）")
-                return (True, "")
-
-            last_reason = reason
-            print(f"[RAG] 向量库健康检查失败（第 {attempt}/{attempts} 次）：{reason}")
-            if attempt < attempts:
-                time.sleep(max(0.0, retry_interval_sec))
-
-        return (False, f"重试 {attempts} 次后仍失败：{last_reason}")
-
     def _write_index_meta(self, *, kb_dir: Path, kb_name: str, source_file_count: int, chunk_count: int) -> None:
         """写入索引元信息，便于后续排查、展示与运维。"""
         used_model = (

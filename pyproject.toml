@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
   "click>=8.1",
   "modelcontextprotocol",
-  "chromadb>=0.5",
+  "chromadb==1.5.8",
 ]
 
 [project.scripts]

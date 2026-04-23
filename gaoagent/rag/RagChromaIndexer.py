@@ -113,12 +113,6 @@ class RagChromaIndexer:
 
         try:
             client = PersistentClient(path=str(store_dir))
-            try:
-                # 当前策略为“全量重建”：先删同名 collection，再按最新文件重建。
-                client.delete_collection(name=collection_name)
-            except Exception:
-                # collection 不存在时会抛异常，这里吞掉并继续创建即可。
-                pass
 
             use_remote = self._use_remote_embedding()
             if use_remote:
@@ -144,6 +138,8 @@ class RagChromaIndexer:
                     },
                 )
 
+            existing_count = int(collection.count())
+            newly_added_count = 0
             total_chunks = len(chunks)
             total_batches = (total_chunks + self._config.batch_size - 1) // self._config.batch_size
             print(f"[RAG] 开始写入向量：total={total_chunks}, batch_size={self._config.batch_size}, batches={total_batches}")
@@ -153,27 +149,31 @@ class RagChromaIndexer:
                 ids = [str(item["id"]) for item in batch]
                 docs = [str(item["document"]) for item in batch]
                 metas = [dict(item["metadata"]) for item in batch]
+                existed_ids = self._get_existing_ids_in_collection(collection=collection, ids=ids)
+                batch_new_count = max(0, len(ids) - len(existed_ids))
                 if use_remote:
                     embeddings = self._embed_remote(docs)
-                    collection.add(
+                    collection.upsert(
                         ids=ids,
                         documents=docs,
                         metadatas=metas,
                         embeddings=embeddings,
                     )
                 else:
-                    collection.add(
+                    collection.upsert(
                         ids=ids,
                         documents=docs,
                         metadatas=metas,
                     )
+                newly_added_count += batch_new_count
                 done = min(i + len(batch), total_chunks)
                 batch_no = (i // self._config.batch_size) + 1
                 progress = (done / total_chunks * 100.0) if total_chunks > 0 else 100.0
+                expect_min_count = existing_count + newly_added_count
                 (healthy, health_reason) = self._check_vector_store_health_with_retry(
                     store_dir=store_dir,
                     collection_name=collection_name,
-                    expect_min_count=done,
+                    expect_min_count=expect_min_count,
                     probe_ids=ids,
                     max_retries=5,
                     retry_interval_sec=1.0,
@@ -183,7 +183,11 @@ class RagChromaIndexer:
                         False,
                         f"第 {batch_no}/{total_batches} 批写入后健康检查失败：{health_reason}",
                     )
-                print(f"[RAG] 写入进度：done={done}/{total_chunks} ({progress:.2f}%)")
+                print(
+                    f"[RAG] 写入进度：done={done}/{total_chunks} ({progress:.2f}%), "
+                    f"newly_added={newly_added_count}, expected_total>={expect_min_count}"
+                )
+            final_chunk_count = int(collection.count())
         except Exception as e:
             return (False, f"写入向量库失败：{e}")
 
@@ -191,7 +195,7 @@ class RagChromaIndexer:
             kb_dir=kb_dir,
             kb_name=kb_name,
             source_file_count=len(source_files),
-            chunk_count=len(chunks),
+            chunk_count=final_chunk_count,
         )
         return (True, "")
 
@@ -492,6 +496,18 @@ class RagChromaIndexer:
             raise RuntimeError("远程 embedding 向量格式错误：单条向量必须是数组")
         return [float(x) for x in value]
 
+    def _get_existing_ids_in_collection(self, *, collection: Any, ids: list[str]) -> set[str]:
+        """
+        查询一批 id 在 collection 中是否已存在，用于估算本批“新增量”。
+        """
+        if not ids:
+            return set()
+        payload = collection.get(ids=ids, include=["metadatas"])
+        raw_ids = payload.get("ids")
+        if not isinstance(raw_ids, list):
+            return set()
+        return {str(x) for x in raw_ids if x is not None}
+
     def _check_vector_store_health(
         self,
         *,
@@ -506,7 +522,8 @@ class RagChromaIndexer:
         目标：
         1) 能正常打开 collection；
         2) count 至少达到当前应完成数量；
-        3) 当前批次至少有一条记录可读（优先探测本批首条 id）。
+        3) 当前批次至少有一条记录可读（优先探测本批首条 id）；
+        4) 执行一次最小向量检索，提前暴露 HNSW 加载类问题。
         """
         try:
             from chromadb import PersistentClient
@@ -526,12 +543,31 @@ class RagChromaIndexer:
             if actual_count > 0:
                 # 优先探测当前批次 id，确保“刚写入”数据可读；没有传入则退化为首条探测。
                 if probe_ids:
-                    payload = collection.get(ids=[str(probe_ids[0])], include=["documents", "metadatas"])
+                    payload = collection.get(
+                        ids=[str(probe_ids[0])],
+                        include=["documents", "metadatas", "embeddings"],
+                    )
                 else:
-                    payload = collection.get(include=["documents", "metadatas"], limit=1, offset=0)
+                    payload = collection.get(
+                        include=["documents", "metadatas", "embeddings"],
+                        limit=1,
+                        offset=0,
+                    )
                 ids = payload.get("ids")
                 if not isinstance(ids, list) or len(ids) < 1:
                     return (False, "读取探测失败：collection.get 未返回有效 ids")
+
+                # 通过 query_embeddings 走一次向量检索路径，触发 HNSW reader 初始化。
+                raw_embeddings = payload.get("embeddings")
+                if not isinstance(raw_embeddings, list) or len(raw_embeddings) < 1:
+                    return (False, "读取探测失败：collection.get 未返回有效 embeddings")
+                probe_embedding = raw_embeddings[0]
+                if not isinstance(probe_embedding, list) or len(probe_embedding) < 1:
+                    return (False, "读取探测失败：probe embedding 格式无效")
+                collection.query(
+                    query_embeddings=[probe_embedding],
+                    n_results=1,
+                )
             return (True, "")
         except Exception as e:
             return (False, str(e))

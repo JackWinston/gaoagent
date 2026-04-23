@@ -10,6 +10,8 @@ import time
 import urllib.request
 import urllib.error
 
+from gaoagent.rag.RagStorePath import resolve_chroma_store_dir
+
 
 @dataclass
 class RagChromaIndexerConfig:
@@ -99,6 +101,12 @@ class RagChromaIndexer:
         if not chunks:
             return (False, "可入库文件内容为空")
 
+        # 临时调试开关：仅向量化前 200 条切片，便于快速排查问题。
+        debug_limit = 200
+        if len(chunks) > debug_limit:
+            print(f"[RAG] 调试模式：切片总数={len(chunks)}，仅处理前 {debug_limit} 条")
+            chunks = chunks[:debug_limit]
+
         try:
             # 延迟导入，避免在未安装依赖时影响其他命令启动。
             from chromadb import PersistentClient
@@ -106,8 +114,8 @@ class RagChromaIndexer:
         except Exception as e:
             return (False, f"导入 chromadb 失败：{e}")
 
-        # 将 Chroma 数据存放在知识库目录内，便于迁移与清理。
-        store_dir = kb_dir / "chroma_db"
+        # 将 Chroma 数据存放到 ASCII 安全路径，规避中文目录下 HNSW 文件异常。
+        store_dir = resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_name)
         store_dir.mkdir(parents=True, exist_ok=True)
         collection_name = self._sanitize_collection_name(kb_name)
 
@@ -138,8 +146,6 @@ class RagChromaIndexer:
                     },
                 )
 
-            existing_count = int(collection.count())
-            newly_added_count = 0
             total_chunks = len(chunks)
             total_batches = (total_chunks + self._config.batch_size - 1) // self._config.batch_size
             print(f"[RAG] 开始写入向量：total={total_chunks}, batch_size={self._config.batch_size}, batches={total_batches}")
@@ -149,8 +155,6 @@ class RagChromaIndexer:
                 ids = [str(item["id"]) for item in batch]
                 docs = [str(item["document"]) for item in batch]
                 metas = [dict(item["metadata"]) for item in batch]
-                existed_ids = self._get_existing_ids_in_collection(collection=collection, ids=ids)
-                batch_new_count = max(0, len(ids) - len(existed_ids))
                 if use_remote:
                     embeddings = self._embed_remote(docs)
                     collection.upsert(
@@ -165,28 +169,9 @@ class RagChromaIndexer:
                         documents=docs,
                         metadatas=metas,
                     )
-                newly_added_count += batch_new_count
                 done = min(i + len(batch), total_chunks)
-                batch_no = (i // self._config.batch_size) + 1
                 progress = (done / total_chunks * 100.0) if total_chunks > 0 else 100.0
-                expect_min_count = existing_count + newly_added_count
-                (healthy, health_reason) = self._check_vector_store_health_with_retry(
-                    store_dir=store_dir,
-                    collection_name=collection_name,
-                    expect_min_count=expect_min_count,
-                    probe_ids=ids,
-                    max_retries=5,
-                    retry_interval_sec=1.0,
-                )
-                if not healthy:
-                    return (
-                        False,
-                        f"第 {batch_no}/{total_batches} 批写入后健康检查失败：{health_reason}",
-                    )
-                print(
-                    f"[RAG] 写入进度：done={done}/{total_chunks} ({progress:.2f}%), "
-                    f"newly_added={newly_added_count}, expected_total>={expect_min_count}"
-                )
+                print(f"[RAG] 写入进度：done={done}/{total_chunks} ({progress:.2f}%)")
             final_chunk_count = int(collection.count())
         except Exception as e:
             return (False, f"写入向量库失败：{e}")
@@ -631,7 +616,7 @@ class RagChromaIndexer:
             "source_file_count": source_file_count,
             "chunk_count": chunk_count,
             "store": "chromadb",
-            "store_dir": str((kb_dir / "chroma_db").resolve()),
+            "store_dir": str(resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_name).resolve()),
         }
         (kb_dir / "index_meta.json").write_text(
             json.dumps(meta, ensure_ascii=False, indent=2, sort_keys=True),

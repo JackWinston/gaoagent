@@ -8,6 +8,8 @@ from typing import Any
 
 from chromadb import PersistentClient
 
+from gaoagent.rag.RagStorePath import resolve_chroma_store_dir
+
 
 def _default_rag_root() -> Path:
     project_rag = Path.cwd() / ".gaoagent" / "rag"
@@ -141,10 +143,10 @@ def export_kb(
         _write_json(kb_out_dir / "index_meta.json", index_meta)
         summary["index_meta"] = index_meta
 
-    store_dir = kb_dir / "chroma_db"
+    store_dir = resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_name)
     if not store_dir.exists() or not store_dir.is_dir():
         summary["status"] = "skip"
-        summary["message"] = "未找到 chroma_db 目录"
+        summary["message"] = f"未找到 Chroma 存储目录: {store_dir}"
         return summary
 
     try:

@@ -5,6 +5,7 @@ from typing import Any
 
 from gaoagent.core.CoreConfigDefault import CoreConfigDefault
 from gaoagent.rag.RagApiConfig import RagApiConfigStore
+from gaoagent.rag.RagStorePath import resolve_chroma_store_dir
 
 
 class RagHandlers:
@@ -57,6 +58,12 @@ class RagHandlers:
                 click.echo(f"已跳过同步到全局目录：{dst_dir}")
                 return
         self._copy_dir(src_dir, dst_dir)
+        src_store_dir = resolve_chroma_store_dir(kb_dir=src_dir, kb_name=kb_name)
+        dst_store_dir = resolve_chroma_store_dir(kb_dir=dst_dir, kb_name=kb_name)
+        if not src_store_dir.exists() or not src_store_dir.is_dir():
+            click.echo(f"同步失败：未找到 Chroma 存储目录：{src_store_dir}")
+            return
+        self._copy_dir(src_store_dir, dst_store_dir)
         click.echo(f"已同步知识库到全局目录：{dst_dir}")
 
     def remove(self, name: str | None = None) -> None:
@@ -81,6 +88,9 @@ class RagHandlers:
             click.echo(f"知识库不存在：{target}")
             return
 
+        store_dir = resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=target)
+        if store_dir.exists() and store_dir.is_dir():
+            shutil.rmtree(store_dir)
         shutil.rmtree(kb_dir)
         click.echo(f"已移除{scope}知识库：{target}")
 
@@ -209,7 +219,13 @@ class RagHandlers:
         return Path.home() / ".gaoagent" / "rag"
 
     def _list_kb_names(self, rag_dir: Path) -> list[str]:
-        return sorted([p.name for p in rag_dir.iterdir() if p.is_dir()])
+        return sorted(
+            [
+                p.name
+                for p in rag_dir.iterdir()
+                if p.is_dir() and p.name != "chroma_store"
+            ]
+        )
 
     def _project_registry_file(self) -> Path:
         return Path.home() / ".gaoagent" / "inited_projects.txt"

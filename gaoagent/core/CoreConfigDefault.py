@@ -15,6 +15,7 @@ from gaoagent.mcp.MCPClientCompat import (
 from gaoagent.core.runner.Utils import scan_skills_metadata
 from gaoagent.rag.RagApiConfig import RagApiConfigStore
 from gaoagent.rag.RagChromaIndexer import RagChromaIndexer, RagChromaIndexerConfig
+from gaoagent.rag.RagStorePath import resolve_chroma_store_dir
 
 
 class CoreConfigDefault:
@@ -367,10 +368,11 @@ class CoreConfigDefault:
         备份已有知识库目录中的向量库与索引文件。
 
         仅备份：
-        - chroma_db/
+        - `.gaoagent/rag/chroma_store/` 下的 Chroma 存储目录
         - index_meta.json
         """
-        targets = [kb_dir / "chroma_db", kb_dir / "index_meta.json"]
+        store_dir = resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_dir.name)
+        targets = [store_dir, kb_dir / "index_meta.json"]
         existing = [p for p in targets if p.exists()]
         if not existing:
             return 0
@@ -389,7 +391,8 @@ class CoreConfigDefault:
         return count
 
     def _remove_rag_artifacts(self, kb_dir: Path) -> None:
-        targets = [kb_dir / "chroma_db", kb_dir / "index_meta.json"]
+        store_dir = resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_dir.name)
+        targets = [store_dir, kb_dir / "index_meta.json"]
         for p in targets:
             if not p.exists():
                 continue

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from gaoagent.rag.RagApiConfig import RagApiConfigStore
+from gaoagent.rag.RagStorePath import resolve_chroma_store_dir
 from gaoagent.core.runner.Utils import _find_config_file
 
 
@@ -20,7 +21,7 @@ class RagChromaRetriever:
         self.kb_name = kb_name
         self.rag_dir = _find_config_file("rag").resolve()
         self.kb_dir = self.rag_dir / kb_name
-        self.store_dir = self.kb_dir / "chroma_db"
+        self.store_dir = resolve_chroma_store_dir(kb_dir=self.kb_dir, kb_name=kb_name)
         self.meta_file = self.kb_dir / "index_meta.json"
 
     def search(self, query: str, top_k: int = 5, score_threshold: float = 0.0) -> dict[str, Any]:
@@ -37,7 +38,7 @@ class RagChromaRetriever:
         """
         if not self.kb_dir.exists() or not self.kb_dir.is_dir():
             return {"success": False, "error": f"知识库不存在：{self.kb_name}"}
-        if not self.store_dir.exists() or not self.meta_file.exists():
+        if not self.meta_file.exists():
             return {"success": False, "error": f"知识库索引不完整：{self.kb_name}"}
 
         try:
@@ -45,13 +46,16 @@ class RagChromaRetriever:
             collection_name = self._sanitize_collection_name(meta.get("kb_name", self.kb_name))
             embedding_mode = meta.get("embedding_mode", "local")
             embedding_model = meta.get("embedding_model", "all-MiniLM-L6-v2")
+            store_dir = self.store_dir
+            if not store_dir.exists() or not store_dir.is_dir():
+                return {"success": False, "error": f"知识库索引不完整：{self.kb_name}"}
 
             try:
                 from chromadb import PersistentClient
             except ImportError as e:
                 return {"success": False, "error": f"导入 chromadb 失败：{e}"}
 
-            client = PersistentClient(path=str(self.store_dir))
+            client = PersistentClient(path=str(store_dir))
 
             if embedding_mode == "remote":
                 collection = client.get_collection(name=collection_name)
@@ -102,7 +106,16 @@ class RagChromaRetriever:
             return {"success": True, "items": items, "kb_name": self.kb_name}
 
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            reason = str(e)
+            if self._is_hnsw_index_error(reason):
+                return {
+                    "success": False,
+                    "error": (
+                        f"知识库索引损坏（HNSW 加载失败）：{self.kb_name}；"
+                        "请重建该知识库索引（清理 store_dir 后重新入库）"
+                    ),
+                }
+            return {"success": False, "error": reason}
 
     def _sanitize_collection_name(self, kb_name: str) -> str:
         """保持与 Indexer 一致的 sanitize 逻辑"""
@@ -148,3 +161,14 @@ class RagChromaRetriever:
             raise RuntimeError(f"远程 embedding 请求失败：http={e.code}, body={body}") from e
         except Exception as e:
             raise RuntimeError(f"远程 embedding 请求失败：{e}") from e
+
+    def _is_hnsw_index_error(self, message: str) -> bool:
+        text = str(message).lower()
+        keywords = [
+            "error loading hnsw index",
+            "hnsw segment reader",
+            "constructing hnsw segment reader",
+            "creating hnsw segment reader",
+            "backfill request to compactor",
+        ]
+        return any(k in text for k in keywords)

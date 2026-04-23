@@ -53,7 +53,14 @@ class RagChromaIndexer:
     _SUPPORTED_SUFFIX = {".md", ".txt"}
 
     def __init__(self, config: RagChromaIndexerConfig | None = None) -> None:
-        # 允许外部传入配置，未传入时使用默认配置。
+        """创建入库器实例。
+
+        参数:
+        - `config`: 可选入库配置；为空时使用 `RagChromaIndexerConfig` 默认值。
+
+        说明:
+        - 自定义切片器函数会在首次使用时懒加载并缓存到 `_external_chunker`。
+        """
         self._config = config or RagChromaIndexerConfig()
         self._external_chunker: Any | None = None
 
@@ -243,6 +250,13 @@ class RagChromaIndexer:
         )
 
     def _chunk_document_default(self, *, kb_name: str, kb_dir: Path, file_path: Path, text: str) -> list[dict[str, Any]]:
+        """内置固定窗口切片实现。
+
+        切片规则:
+        - 步长为 `chunk_size - chunk_overlap`。
+        - 基于知识库内相对路径构造稳定 chunk id。
+        - 为每个切片补齐 `kb_name/source_file/chunk_index/start/end` 元数据。
+        """
         step = self._config.chunk_size - self._config.chunk_overlap
         # 使用知识库内相对路径，避免机器绝对路径污染索引元数据。
         rel_path = str(file_path.resolve().relative_to(kb_dir.resolve()))
@@ -271,6 +285,12 @@ class RagChromaIndexer:
         return chunks
 
     def _chunk_document_external(self, *, kb_name: str, kb_dir: Path, file_path: Path, text: str) -> list[dict[str, Any]]:
+        """调用外部自定义切片器生成切片列表。
+
+        要求:
+        - 外部函数签名需兼容 `chunk_document(...)`。
+        - 返回值必须为 `list`，后续由 `_normalize_external_chunks()` 归一化。
+        """
         chunker = self._load_external_chunker()
         result = chunker(
             kb_name=kb_name,
@@ -285,6 +305,12 @@ class RagChromaIndexer:
         return result
 
     def _load_external_chunker(self) -> Any:
+        """加载并缓存外部切片器函数。
+
+        加载规则:
+        - 从 `chunker_py_file` 指向的 Python 文件动态导入模块。
+        - 模块中必须存在可调用的 `chunk_document` 函数。
+        """
         if self._external_chunker is not None:
             return self._external_chunker
 
@@ -312,6 +338,17 @@ class RagChromaIndexer:
         file_path: Path,
         chunks: list[Any],
     ) -> list[dict[str, Any]]:
+        """将外部切片器输出统一为标准入库结构。
+
+        支持输入项:
+        - `str`: 仅表示 document 文本。
+        - `dict`: 支持显式提供 `id/document/metadata`。
+
+        归一化策略:
+        - 空文本切片会被丢弃。
+        - 未提供 `id` 时自动生成稳定 id。
+        - 自动补齐最小元数据字段（`kb_name/source_file/chunk_index`）。
+        """
         rel_path = str(file_path.resolve().relative_to(kb_dir.resolve()))
         normalized: list[dict[str, Any]] = []
         for i, item in enumerate(chunks):
@@ -362,6 +399,7 @@ class RagChromaIndexer:
         return f"kb_{base}"
 
     def _use_remote_embedding(self) -> bool:
+        """判断当前配置是否启用远程 embedding 模式。"""
         return bool(
             self._config.remote_base_url.strip()
             and self._config.remote_api_key.strip()
@@ -461,6 +499,7 @@ class RagChromaIndexer:
         raise RuntimeError(f"远程 embedding 响应格式不支持，响应片段：{raw_preview}")
 
     def _extract_embeddings_from_data_list(self, items: list[Any]) -> list[list[float]]:
+        """解析 OpenAI 风格 `data[*].embedding` 响应结构。"""
         embeddings: list[list[float]] = []
         for item in items:
             emb = item.get("embedding") if isinstance(item, dict) else None
@@ -470,6 +509,7 @@ class RagChromaIndexer:
         return embeddings
 
     def _to_embeddings_list(self, value: Any) -> list[list[float]]:
+        """将远程响应中的 embedding 字段规范为二维浮点数组。"""
         if not isinstance(value, list):
             raise RuntimeError("远程 embedding 响应格式错误：embeddings 不是数组")
         if not value:
@@ -480,6 +520,7 @@ class RagChromaIndexer:
         return [self._to_single_embedding(x) for x in value]
 
     def _to_single_embedding(self, value: Any) -> list[float]:
+        """将单条向量转换为 `list[float]` 并校验结构。"""
         if not isinstance(value, list):
             raise RuntimeError("远程 embedding 向量格式错误：单条向量必须是数组")
         return [float(x) for x in value]
@@ -569,7 +610,13 @@ class RagChromaIndexer:
             return (False, str(e))
 
     def _write_index_meta(self, *, kb_dir: Path, kb_name: str, source_file_count: int, chunk_count: int) -> None:
-        """写入索引元信息，便于后续排查、展示与运维。"""
+        """写入索引元信息，便于展示、迁移和运维排障。
+
+        关键字段:
+        - `embedding_mode/embedding_model`: 记录建库时采用的向量化模式与模型。
+        - `source_file_count/chunk_count`: 记录语料规模，便于核对重建结果。
+        - `store_dir`: 指向当前知识库真实 Chroma 存储目录。
+        """
         used_model = (
             self._config.remote_embedding_model
             if self._use_remote_embedding()

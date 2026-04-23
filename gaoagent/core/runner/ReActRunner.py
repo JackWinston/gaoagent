@@ -26,8 +26,29 @@ from gaoagent.mcp.MCPClientCompat import MCPStdioClientSync, build_mcp_tools_cac
 
 
 class ReActRunner(BaseRunner):
+    """ReActRunner 类。
+    
+    职责:
+    - 封装 ReAct 模式的业务能力与状态。
+    - 提供 ReActRunner 语义下的方法集合，供上层流程协调调用。
+    
+    继承关系:
+    - 基类: BaseRunner
+    """
     @staticmethod
     def _enabled_mcp_servers(mcp_servers_raw: dict[str, Any] | None) -> dict[str, Any]:
+        """_enabled_mcp_servers 方法。
+        
+        用途:
+        - 从原始 MCP 服务器配置中筛选出已启用的服务器。
+        - 筛选出的服务器配置将被用于 ReAct 模式的运行。
+        
+        参数:
+        - mcp_servers_raw: 输入参数，用于控制该方法的处理行为。
+        
+        返回:
+        - dict[str, Any]: 已启用的 MCP 服务器配置字典。
+        """
         enabled: dict[str, Any] = {}
         if not isinstance(mcp_servers_raw, dict):
             return enabled
@@ -44,6 +65,18 @@ class ReActRunner(BaseRunner):
         exported_map: dict[str, Any] | None,
         mcp_servers: dict[str, Any],
     ) -> dict[str, Any]:
+        """_filter_exported_map_for_servers 方法。
+        
+        - 从导出的工具映射中筛选出与已启用的 MCP 服务器相关的工具。
+        - 筛选出的工具映射将被用于 ReAct 模式的运行。
+        
+        参数:
+        - exported_map: 输入参数，用于控制该方法的处理行为。
+        - mcp_servers: 输入参数，用于控制该方法的处理行为。
+        
+        返回:
+        - dict[str, Any]: 筛选出的工具映射字典。
+        """
         filtered: dict[str, Any] = {}
         if not isinstance(exported_map, dict):
             return filtered
@@ -66,6 +99,18 @@ class ReActRunner(BaseRunner):
         config: RunnerConfig | None = None,
         tools: ToolRegistry | None = None,
     ) -> None:
+        """__init__ 方法。
+        
+        用途:
+        - 初始化 ReActRunner 实例，设置 ReAct 模式的运行配置。
+        
+        参数:
+        - config: 输入参数，用于控制 ReActRunner 实例的运行配置。
+        - tools: 输入参数，用于控制 ReActRunner 实例运行的工具注册。
+        
+        返回:
+        - None: 构造函数仅完成实例初始化，不返回业务结果。
+        """
         cfg = RunnerConfig(
             max_steps=(config.max_steps if config else 32),
             tools=(tools or (config.tools if config else None) or default_tool_registry()),
@@ -77,9 +122,83 @@ class ReActRunner(BaseRunner):
         )
 
     def decide(self, ctx: RunnerContext) -> StepResult:
+        """decide 方法。
+        
+        用途:
+        - 执行 ReAct 模式的决策逻辑。
+        
+        参数:
+        - ctx: 输入参数，用于控制 ReActRunner 实例的运行上下文。
+        
+        返回:
+        - StepResult: 返回当前步骤的结果。
+        """
         return self._callLLM(ctx)
 
     def run(self, question: str, shared_memory: dict[str, Any] | None = None) -> RunResult:
+        """执行一次完整的 ReAct 推理回合（主控循环）。
+
+        这个方法是 Runner 的“编排入口”，负责把一次用户问题从“输入文本”
+        推进到“最终答案”或“明确失败”，并在中间驱动 LLM 与工具多轮交互。
+
+        方法职责（业务视角）:
+        - 组装本轮会话上下文（system prompt + user question）。
+        - 决定本轮可用工具集合（内置工具 + MCP 导出工具）。
+        - 在 step 循环中执行 ReAct 协议：
+          - 让 LLM 决策（`final` / `thought` / `function_call` / `retry`）。
+          - 若是工具调用，则执行工具并将 observation 回填到历史。
+          - 若是最终答案，则结束并返回。
+        - 在关键异常场景下快速失败，避免静默降级造成“看似成功、实际不可用”。
+
+        参数:
+        - question: 用户输入问题。必须是非空字符串；空值会被直接拒绝。
+        - shared_memory: 预留参数，当前实现未消费（用于未来跨轮共享记忆扩展）。目前,本轮的记忆是存在在 `RunnerContext` 中的,并未做本地持久化 , 后续版本可能会考虑添加本地持久化功能,并把 `shared_memory` 作为参数传递给 `decide()` 方法。
+
+        返回:
+        - RunResult:
+          - `success=True`: LLM 产出 `final` 决策并返回最终文本。
+          - `success=False`: 输入非法、MCP 工具不可用、工具注册缺失、或超过最大步数。
+
+        核心流程（实现细节）:
+        1) 参数校验与上下文重置
+           - 拒绝空问题。
+           - 新建 `RunnerContext(step=0, history=[])`，确保每次 `run()` 是独立回合。
+
+        2) MCP 工具发现与可用性判定
+           - 优先读取缓存（快路径）：`load_mcp_tools_cache()`。
+           - 仅保留“已启用服务器”对应的工具映射，防止脏配置混入。
+           - 当缓存缺失或覆盖不完整时，运行期临时拉取工具清单兜底。
+           - 记录发现错误信息；若“配置了 MCP 但无任何可用 MCP 工具”，直接失败返回，
+             不降级为“仅本地工具”模式（这是明确的业务保护策略）。
+
+        3) 构建对话初始历史
+           - 动态生成 system prompt，注入当前可见工具名集合。
+           - 追加 user 问题消息。
+
+        4) 进入逐步推理循环（1..max_steps）
+           - 调用 `decide()`（内部即 `_callLLM()`）获取当前 StepResult。
+           - 按决策类型分支：
+             - `function_call`:
+               - 规范化 tool call（补齐 call id、校验参数类型）。
+               - 先写入 assistant 的 `tool_calls` 消息，再逐个执行工具。
+               - 工具路由优先级：本地 ToolRegistry > MCP 导出工具 > Unknown tool 错误。
+               - 工具执行结果统一写入 `role=tool` 消息，供下一轮 LLM 消费。
+               - 分支结束后 `continue`，进入下一 step。
+             - `thought`:
+               - 将模型中间思考文本（协议字段或退化 content）回填 history。
+               - `continue` 进入下一 step。
+             - `final`:
+               - 把最终协议信息写入 history（便于审计/追踪）。
+               - 立即返回成功结果。
+
+        5) 兜底失败
+           - 若达到 `max_steps` 仍未产出 `final`，返回 `Max steps reached`。
+
+        关键设计点:
+        - “模型可见工具集”和“执行期可路由工具集”保持一致，减少 `Unknown tool` 偏差。
+        - 工具 observation 统一 JSON 化，提升协议稳定性和可观测性。
+        - 通过 run_logger 记录 step 结果与关键异常，便于线上排障。
+        """
         if question is None or not str(question).strip():
             return RunResult(success=False, error="Invalid question")
 
@@ -362,6 +481,57 @@ class ReActRunner(BaseRunner):
         return RunResult(success=False, error="Max steps reached")
 
     def _callLLM(self, ctx: RunnerContext) -> StepResult:
+        """执行单步 LLM 决策调用，并对“非法协议输出”做有限重试。
+
+        这个方法是 ReAct 每一步的“模型决策器”：
+        输入当前 `ctx.history`，输出一个标准化 `StepResult`，交给 `run()`
+        决定下一步是继续思考、调用工具、还是结束。
+
+        方法职责（业务视角）:
+        - 创建 OpenAI 兼容客户端并发起 chat completion 请求。
+        - 把“当前可用工具”转换为 function calling 规格传给模型。
+        - 解析模型响应为统一协议（`parse_llm_response`）。
+        - 当模型输出不符合协议时，按配置进行有限次数自动重试。
+        - 重试仍失败时，返回可解释的 `final` 失败说明，而不是抛异常中断主流程。
+
+        参数:
+        - ctx: 当前回合上下文，至少包含：
+          - `history`: 截止当前 step 的完整消息历史。
+          - `step`: 当前 step 序号（用于日志与可观测性）。
+
+        返回:
+        - StepResult:
+          - 正常路径：返回解析后的 `thought` / `function_call` / `final`。
+          - 异常协议路径：若持续 `retry` 到上限，返回 `decision="final"` 的失败说明。
+
+        具体流程:
+        1) 配置前置校验
+           - 若缺少 API 基础配置（baseurl/api_key/model），立即返回 `final` 错误文本，
+             避免进入无效网络调用。
+
+        2) 构建请求上下文
+           - 收集内置工具名，并合并 `run()` 阶段确定的 MCP 导出工具名。
+           - 用 `build_function_specs()` 生成 function calling schema。
+           - 仅当存在工具时启用 `tool_choice="auto"`，无工具则传 `None`。
+
+        3) 发送请求并解析响应
+           - 调用 `post_chat_completions()`，携带 model/messages/tools/step。
+           - 用 `parse_llm_response()` 归一化响应，得到 `StepResult`。
+
+        4) 非法输出重试
+           - 当 `decision=="retry"` 视为“模型输出不合法/不可执行”。
+           - 在 `llm_invalid_retry` 配置范围内重试，并记录日志事件
+             `llm_invalid_response_retry`（attempt、raw、content）。
+           - 一旦拿到非 `retry` 结果立即返回。
+
+        5) 重试耗尽兜底
+           - 组装 `_retry` 元信息写入 `raw`，并返回 `decision="final"`，
+             内容明确包含“已重试仍失败 + 次数 + 最后一次输出摘要”。
+
+        关键设计点:
+        - 不把解析异常直接上抛，而是转换成协议内可消费结果，让外层流程保持稳定。
+        - 与 `run()` 共用同一份 MCP 工具可见集，保证“可见即可调、可调即可见”。
+        """
         if not self.request_base_info:
             return StepResult(decision="final", content="No valid API configuration")
 

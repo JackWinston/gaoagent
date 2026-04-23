@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 import traceback
 from pathlib import Path
@@ -17,16 +16,47 @@ _PROJECTS_REGISTRY_FILENAME = "inited_projects.txt"
 
 
 def now_ms() -> int:
+    """now_ms 函数。
+    
+    用途:
+    - 获取当前时间戳（毫秒级）。
+
+    返回:
+    - int: 返回当前时间戳（毫秒级）。
+    """
     return int(time.time() * 1000)
 
 
 def truncate_text(s: str, limit: int) -> str:
+    """truncate_text 函数。
+    
+    用途:
+    - 截断文本，确保不超过指定长度。
+    
+    参数:
+    - s: 输入参数，用于指定要截断的文本。
+    - limit: 输入参数，用于指定截断后的文本长度上限。
+    
+    返回:
+    - str: 返回截断后的文本。
+    """
     if len(s) <= limit:
         return s
     return s[: max(0, limit - 1)] + "…"
 
 
 def safe_json_dumps(value: Any) -> str:
+    """safe_json_dumps 函数。
+    
+    用途:
+    - 安全地将任意Python对象转换为JSON字符串。
+    
+    参数:
+    - value: 输入参数，用于指定要转换的Python对象。
+    
+    返回:
+    - str: 返回转换后的JSON字符串。
+    """
     try:
         return json.dumps(value, ensure_ascii=False, sort_keys=True)
     except Exception:
@@ -34,6 +64,18 @@ def safe_json_dumps(value: Any) -> str:
 
 
 def summarize(value: Any, limit: int = 400) -> str:
+    """summarize 函数。
+    
+    用途:
+    - 对任意值进行总结，确保不超过指定长度。
+    
+    参数:
+    - value: 输入参数，用于指定要总结的值。
+    - limit: 输入参数，用于指定总结后的文本长度上限。
+    
+    返回:
+    - str: 返回总结后的文本。
+    """
     if value is None:
         return "null"
     if isinstance(value, (str, int, float, bool)):
@@ -42,6 +84,17 @@ def summarize(value: Any, limit: int = 400) -> str:
 
 
 def redact(value: Any) -> Any:
+    """redact 函数。
+    
+    用途:
+    - 对敏感信息进行隐藏，确保在日志记录等场景中不泄露敏感数据。
+    
+    参数:
+    - value: 输入参数，用于控制该函数的处理行为。
+    
+    返回:
+    - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+    """
     sensitive_keys = {
         "api_key",
         "apikey",
@@ -65,6 +118,17 @@ def redact(value: Any) -> Any:
 
 
 def normalize_exception(e: BaseException) -> dict[str, Any]:
+    """normalize_exception 函数。
+    
+    用途:
+    - 对异常进行标准化处理，提取异常类型、消息和栈轨迹。
+    
+    参数:
+    - e: 输入参数，用于控制该函数的处理行为。
+    
+    返回:
+    - dict[str, Any]: 返回标准化后的异常信息，包含异常类型、异常消息和异常栈轨迹。
+    """
     return {
         "type": type(e).__name__,
         "message": str(e),
@@ -73,14 +137,38 @@ def normalize_exception(e: BaseException) -> dict[str, Any]:
 
 
 def __global_config_dir() -> Path:
+    """__global_config_dir 函数。
+    
+    用途:
+    - 获取全局配置目录的路径。
+    
+    返回:
+    - Path: 返回全局配置目录的路径。
+    """
     return Path.home() / ".gaoagent"
 
 
 def _project_registry_file() -> Path:
+    """_project_registry_file 函数。
+    
+    用途:
+    - 获取项目注册文件的路径。
+    
+    返回:
+    - Path: 返回项目注册文件的路径。
+    """
     return __global_config_dir() / _PROJECTS_REGISTRY_FILENAME
 
 
 def _load_project_registry_paths() -> list[Path]:
+    """_load_project_registry_paths 函数。
+    
+    用途:
+    - 加载项目注册文件中的项目路径。
+    
+    返回:
+    - list[Path]: 返回项目注册文件中记录的项目路径列表。
+    """
     registry_file = _project_registry_file()
     if not registry_file.exists() or not registry_file.is_file():
         return []
@@ -128,12 +216,42 @@ def project_root_dir() -> Path:
     click.echo("请先执行 gaoagent init 命令初始化项目")
     raise RuntimeError(f"未检测到项目配置目录：{cwd / '.gaoagent'}")
 
+def try_project_root_dir() -> Path | None:
+    """尝试返回项目根目录；未命中时返回 `None`，不输出提示。"""
+    cwd = Path.cwd().resolve()
+    config_dir = cwd / ".gaoagent"
+    if config_dir.exists() and config_dir.is_dir():
+        return cwd
+
+    candidates: list[Path] = []
+    for root in _load_project_registry_paths():
+        config = root / ".gaoagent"
+        if not (root.exists() and root.is_dir() and config.exists() and config.is_dir()):
+            continue
+        if root == cwd or root in cwd.parents:
+            candidates.append(root)
+    if candidates:
+        candidates.sort(key=lambda p: len(p.parts), reverse=True)
+        return candidates[0]
+    return None
+
 def project_config_dir() -> Path:
     """返回项目配置目录。"""
     return project_root_dir() / ".gaoagent"
 
 
 def _find_config_file(name: str) -> Path:
+    """_find_config_file 函数。
+    
+    用途:
+    - 查找项目配置目录下的指定配置文件。
+    
+    参数:
+    - name: 输入参数，指定要查找的配置文件名。
+    
+    返回:
+    - Path: 返回配置文件的路径。    
+    """
     return project_config_dir() / name
 
 

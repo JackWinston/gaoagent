@@ -12,11 +12,28 @@ from gaoagent.core.runner.Utils import project_config_dir
 
 
 class RunLogger:
+    """RunLogger 类。
+    
+    职责:
+    - 记录 ReAct 模式的运行日志。
+    
+    """
     def __init__(self, file_path: Path) -> None:
         self.file_path = file_path
         self._lock = threading.Lock()
 
     def log_event(self, event_type: str, payload: Any, *, step: int | None = None) -> None:
+        """log_event 方法。
+        
+        用途:
+        - 记录 ReAct 模式的运行事件。
+        
+        参数:
+        - event_type: 输入参数，用于指定事件类型，必须是非空字符串；空值会被直接拒绝。
+        - payload: 输入参数，用于指定事件数据。
+        - step: 输入参数，用于指定当前事件的步骤号。
+        
+        """
         record: dict[str, Any] = {
             "ts": datetime.now().isoformat(timespec="seconds"),
             "event": event_type,
@@ -36,18 +53,56 @@ _CURRENT_RUN_LOGGER: ContextVar[RunLogger | None] = ContextVar("gaoagent_run_log
 
 
 def get_current_run_logger() -> RunLogger | None:
+    """get_current_run_logger 函数。
+    
+    用途:
+    - 获取当前运行日志记录器。
+    
+    返回:
+    - RunLogger | None: 返回当前运行日志记录器；如果未设置，则返回   None。
+    """
     return _CURRENT_RUN_LOGGER.get()
 
 
 def set_current_run_logger(logger: RunLogger | None):
+    """set_current_run_logger 函数。
+    
+    用途:
+    - 设置当前运行日志记录器。
+    
+    参数:
+    - logger: 输入参数，用于指定要设置的运行日志记录器。
+    
+
+    """
     return _CURRENT_RUN_LOGGER.set(logger)
 
 
 def reset_current_run_logger(token) -> None:
+    """reset_current_run_logger 函数。
+    
+    用途:
+    - 重置当前运行日志记录器。
+    
+    参数:
+    - token: 输入参数，用于控制该函数的处理行为。
+    
+    """
     _CURRENT_RUN_LOGGER.reset(token)
 
 
 def create_run_logger() -> RunLogger:
+    """create_run_logger 函数。
+    
+    用途:
+    - 创建一个新的 RunLogger 实例，用于记录 ReAct 模式的运行日志。
+    
+    参数:
+    - 无: 该方法不需要额外业务参数。
+    
+    返回:
+    - RunLogger: 返回一个新的 RunLogger 实例。
+    """
     logs_dir = project_config_dir() / "logs"
     ts = datetime.now().strftime("%Y-%m-%d,%H:%M:%S")
     if os.name == "nt":
@@ -59,6 +114,17 @@ def create_run_logger() -> RunLogger:
 
 
 def _to_jsonable(value: Any) -> Any:
+    """_to_jsonable 函数。
+    
+    用途:
+    - 将任意 Python 对象转换为 JSON 可序列化的格式。
+    
+    参数:
+    - value: 输入参数，用于指定待转换的 Python 对象。
+    
+    返回:
+    - Any: 返回转换后的 JSON 可序列化对象。
+    """
     if is_dataclass(value):
         try:
             return {k: _to_jsonable(v) for k, v in asdict(value).items()}
@@ -78,6 +144,17 @@ def _to_jsonable(value: Any) -> Any:
 
 
 def _safe_json_dumps(value: Any) -> str:
+    """_safe_json_dumps 函数。
+    
+    用途:
+    - 安全地将 Python 对象转换为 JSON 字符串，处理非 JSON 序列化的情况。
+    
+    参数:
+    - value: 输入参数，用于指定要转换的 Python 对象。
+    
+    返回:
+    - str: 返回 JSON 字符串表示；如果转换失败，返回对象的字符串表示。
+    """
     import json
 
     try:

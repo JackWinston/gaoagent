@@ -13,11 +13,15 @@ from gaoagent.core.runner.Utils import _find_config_file
 
 
 class RagChromaRetriever:
-    """
-    RAG 知识库检索器。
-    用于根据用户查询 (query) 检索指定知识库中最相关的文档切片。
+    """RAG 知识库检索器。
+
+    职责:
+    - 根据查询语句从指定知识库检索最相关切片。
+    - 自动兼容本地 embedding 与远程 embedding 两种检索模式。
+    - 对常见索引损坏场景（如 HNSW 加载失败）返回可读错误。
     """
     def __init__(self, kb_name: str) -> None:
+        """初始化检索器并解析知识库相关路径。"""
         self.kb_name = kb_name
         self.rag_dir = _find_config_file("rag").resolve()
         self.kb_dir = self.rag_dir / kb_name
@@ -163,6 +167,7 @@ class RagChromaRetriever:
             raise RuntimeError(f"远程 embedding 请求失败：{e}") from e
 
     def _is_hnsw_index_error(self, message: str) -> bool:
+        """判断异常信息是否属于 HNSW 索引加载类故障。"""
         text = str(message).lower()
         keywords = [
             "error loading hnsw index",

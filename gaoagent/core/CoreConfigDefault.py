@@ -148,6 +148,17 @@ class CoreConfigDefault:
         return config_dir
 
     def _read_json(self, file_path: Path) -> Any | None:
+        """_read_json 方法。
+        
+        用途:
+        - 读取指定 JSON 文件的内容。
+        
+        参数:
+        - file_path: 输入参数，指定要读取的 JSON 文件路径。
+        
+        返回:
+        - Any: 返回 JSON 文件的内容。
+        """
         while True:
             if not file_path.exists():
                 return None
@@ -159,6 +170,16 @@ class CoreConfigDefault:
                     return None
 
     def _write_json(self, file_path: Path, payload: Any) -> None:
+        """_write_json 方法。
+        
+        用途:
+        - 写入指定 JSON 文件的内容。
+        
+        参数:
+        - file_path: 输入参数，指定要写入的 JSON 文件路径。
+        - payload: 输入参数，指定要写入的 JSON 内容。
+        
+        """
         tmp_file = file_path.with_name(f"{file_path.name}.tmp")
         tmp_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
         tmp_file.replace(file_path)
@@ -393,6 +414,14 @@ class CoreConfigDefault:
         return count
 
     def _remove_rag_artifacts(self, kb_dir: Path) -> None:
+        """_remove_rag_artifacts 方法。
+        
+        用途:
+        - 删除知识库目录中的向量库与索引文件。
+        
+        参数:
+        - kb_dir: 输入参数，指定知识库目录路径。
+        """
         store_dir = resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_dir.name)
         meta_file = resolve_index_meta_file(kb_dir=kb_dir, kb_name=kb_dir.name)
         targets = [store_dir, meta_file]
@@ -446,6 +475,16 @@ class CoreConfigDefault:
         return indexer.ingest_knowledge_base(kb_name=kb_name, kb_dir=kb_dir)
 
     def _prompt_import_rag_api_after_copy(self, *, kb_name: str, rag_dir: Path) -> None:
+        """_prompt_import_rag_api_after_copy 方法。
+        
+        用途:
+        - 提示用户导入 RAG 远程 Embedding API 配置。
+        
+        参数:
+        - kb_name: 输入参数，指定知识库名称。
+        - rag_dir: 输入参数，指定 RAG 目录路径。
+
+        """
         if not click.confirm("是否现在导入 RAG 远程 Embedding API 配置？", default=False):
             return
         kb_dir = rag_dir / kb_name
@@ -487,6 +526,17 @@ class CoreConfigDefault:
         click.echo(f"配置文件：{config_file}")
         
     def _load_skills_metadata(self, skills_dir: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+        """_load_skills_metadata 方法。
+        
+        用途:
+        - 加载技能目录下的技能元数据文件。
+        
+        参数:
+        - skills_dir: 输入参数，指定技能目录路径。
+        
+        返回:
+        - tuple[list[dict[str, str]], list[dict[str, str]]]: 返回技能元数据列表（已禁用 与未禁用）。
+        """
         return scan_skills_metadata(skills_dir)
 
     

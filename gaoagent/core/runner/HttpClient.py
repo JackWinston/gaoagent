@@ -34,6 +34,12 @@ class HttpResponse:
 
 
 class OpenAICompatibleHttpClient:
+    """OpenAICompatibleHttpClient 类。
+    
+    职责:
+    - 封装 OpenAI Chat Completions 接口的 HTTP 调用.
+    
+    """
     def __init__(self, *, base_url: str, api_key: str, timeout_s: int = 60) -> None:
         """
         创建一个兼容 OpenAI Chat Completions 接口的 HTTP 客户端。
@@ -80,6 +86,20 @@ class OpenAICompatibleHttpClient:
         tool_choice: Any | None = None,
         step: int | None = None,
     ) -> HttpResponse:
+        """post_chat_completions 方法。
+        
+        用途:
+        - 调用 OpenAI Chat Completions 接口，获取模型回复.
+        
+        参数:
+        - model: 模型名称.
+        - messages: 输入的消息列表.
+        - tools: 工具列表.
+        - tool_choice: 工具选择.
+        
+        返回:
+        - HttpResponse: 返回模型回复的 HttpResponse 对象.
+        """
         url = self._build_chat_completions_url()
         body_obj: dict[str, Any] = {
             "model": model,

@@ -24,6 +24,17 @@ def build_system_prompt(tool_names: list[str], mode: Mode) -> str:
 
 
 def build_react_system_text( *, tool_names: list[str] | None) -> str:
+    """build_react_system_text 函数。
+    
+    用途:
+    - 构建 ReAct 模式的系统提示词。
+    
+    参数:
+    - tool_names: 工具名称列表.
+    
+    返回:
+    - str: 系统提示词.
+    """
     available_tools = tool_names or []
     tool_line = " | ".join(available_tools) if available_tools else "无可用工具"
 
@@ -89,6 +100,14 @@ Python Version : {platform.python_version()}
 
 
 def _resolve_project_root_for_prompt() -> str:
+    """_resolve_project_root_for_prompt 函数。
+    
+    用途:
+    - 解析当前项目的根目录，用于在系统提示词中引用项目路径。
+    
+    返回:
+    - str: 项目根目录路径.
+    """
     try:
         return str(project_root_dir())
     except Exception:
@@ -96,6 +115,14 @@ def _resolve_project_root_for_prompt() -> str:
 
 
 def _getSkillStr() -> str:
+    """_getSkillStr 函数。
+    
+    用途:
+    - 构建 Skill 索引字符串，用于在系统提示词中引用。
+    
+    返回:
+    - str: Skill 索引字符串.
+    """
     raw_skills = load_skills()
     if not isinstance(raw_skills, dict):
         return ""

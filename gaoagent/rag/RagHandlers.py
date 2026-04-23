@@ -12,7 +12,20 @@ from gaoagent.rag.RagStorePath import (
 
 
 class RagHandlers:
+    """RAG 命令处理器（`gaoagent rag` 子命令入口）。
+
+    定位:
+    - 负责知识库的增删查与作用域分发（项目优先、全局兜底）。
+    - 封装 CLI 层的交互逻辑与路径选择，底层索引/检索由专用组件实现。
+
+    核心能力:
+    - `list`: 列出当前作用域知识库。
+    - `add`: 创建知识库并在项目/全局间做同步。
+    - `remove`: 删除知识库及其 Chroma 存储目录。
+    - `search`: 在指定知识库执行向量检索并格式化输出。
+    """
     def list(self) -> None:
+        """列出当前作用域下可见的知识库名称。"""
         (scope, rag_dir) = self._resolve_scope_and_rag_dir()
         if not rag_dir.exists() or not rag_dir.is_dir():
             click.echo(f"未检测到{scope} RAG 目录：{rag_dir}")
@@ -28,6 +41,13 @@ class RagHandlers:
             click.echo(f"{idx}. {name}")
 
     def add(self, name: str | None = None, chunker_py_file: str | None = None) -> None:
+        """新增知识库，并在项目与全局目录之间按规则同步。
+
+        行为:
+        - 若当前不在项目作用域，仅在全局创建知识库。
+        - 若在项目作用域，先在项目创建，再按用户选择同步到全局目录。
+        - 同步时会复制 `.chrome_store` 对应目录并修正 `index_meta.store_dir`。
+        """
         kb_name = (name or "").strip()
         if not kb_name:
             kb_name = click.prompt("请输入要新增的知识库名称", type=str).strip()
@@ -71,6 +91,7 @@ class RagHandlers:
         click.echo(f"已同步知识库到全局目录：{dst_dir}")
 
     def remove(self, name: str | None = None) -> None:
+        """删除知识库目录及对应 Chroma 存储目录。"""
         (scope, rag_dir) = self._resolve_scope_and_rag_dir()
         if not rag_dir.exists() or not rag_dir.is_dir():
             click.echo(f"未检测到{scope} RAG 目录：{rag_dir}")
@@ -99,6 +120,7 @@ class RagHandlers:
         click.echo(f"已移除{scope}知识库：{target}")
 
     def search(self, kb_name: str, query: str, top_k: int = 3) -> None:
+        """在指定知识库执行检索并输出结果摘要。"""
         from gaoagent.rag.RagChromaRetriever import RagChromaRetriever
         
         click.echo(f"正在知识库 '{kb_name}' 中检索: {query} (top_k={top_k})...")
@@ -123,15 +145,18 @@ class RagHandlers:
             click.echo(f"    {doc}...")
 
     def _resolve_scope_and_rag_dir(self) -> tuple[str, Path]:
+        """解析当前作用域并返回对应 RAG 根目录。"""
         project_root = self._detect_project_root()
         if project_root is not None:
             return ("项目", project_root / ".gaoagent" / "rag")
         return ("全局", self._global_rag_dir())
 
     def _global_rag_dir(self) -> Path:
+        """返回全局 RAG 根目录（`~/.gaoagent/rag`）。"""
         return Path.home() / ".gaoagent" / "rag"
 
     def _list_kb_names(self, rag_dir: Path) -> list[str]:
+        """列出知识库目录名，并过滤内部管理目录（如 `.chrome_store`）。"""
         return sorted(
             [
                 p.name
@@ -141,9 +166,11 @@ class RagHandlers:
         )
 
     def _project_registry_file(self) -> Path:
+        """返回项目注册表文件路径。"""
         return Path.home() / ".gaoagent" / "inited_projects.txt"
 
     def _load_project_registry_paths(self) -> list[Path]:
+        """读取项目注册表并返回去重后的项目根路径列表。"""
         registry_file = self._project_registry_file()
         if not registry_file.exists() or not registry_file.is_file():
             return []
@@ -170,6 +197,12 @@ class RagHandlers:
         return roots
 
     def _detect_project_root(self) -> Path | None:
+        """检测当前命令所在项目根目录。
+
+        判定规则:
+        - 当前目录含 `.gaoagent` 时直接视为项目根。
+        - 否则从注册表中匹配“最深父目录”作为项目根。
+        """
         cwd = Path.cwd().resolve()
         config_dir = cwd / ".gaoagent"
         if config_dir.exists() and config_dir.is_dir():
@@ -189,11 +222,13 @@ class RagHandlers:
         return candidates[0]
 
     def _copy_dir(self, src: Path, dst: Path) -> None:
+        """目录覆盖复制：目标存在时先删后拷。"""
         if dst.exists():
             shutil.rmtree(dst)
         shutil.copytree(src, dst)
 
     def _rewrite_index_meta_store_dir(self, *, kb_dir: Path, kb_name: str) -> None:
+        """修正 `index_meta.json` 的 `store_dir` 为当前目录实际路径。"""
         meta_file = resolve_index_meta_file(kb_dir=kb_dir, kb_name=kb_name)
         if not meta_file.exists() or not meta_file.is_file():
             return

@@ -17,22 +17,43 @@ from gaoagent.rag.RagStorePath import (
 
 
 class CoreInit:
+    """项目初始化编排器（`gaoagent init` 的核心实现）。
+
+    该类负责把“全局配置”落地为“当前项目可运行配置”，并在初始化阶段完成
+    API/MCP/Skills/RAG 等资源的选择与复制。整体上属于交互式初始化流程的控制层。
+
+    核心职责:
+    - 校验全局环境是否已准备好（如 `~/.gaoagent`、全局 API 配置）。
+    - 在项目目录创建 `.gaoagent` 并写入项目级配置。
+    - 交互式选择默认 API 与模型、MCP 服务、Skill、RAG 知识库。
+    - 维护项目注册表（记录已初始化项目根目录），并清理失效条目。
+    - 维护 `.gitignore`，避免项目级私有配置被误提交。
+
+    设计边界:
+    - 仅负责“初始化期编排”，不负责任务执行期的推理逻辑。
+    - 不负责 LLM 调用细节；只负责准备运行所需配置与资源。
+    """
     _PROJECTS_REGISTRY_FILENAME = "inited_projects.txt"
 
     def init(self) -> None:
-        """
-        初始化核心组件。
+        """执行当前项目的一次完整初始化流程。
 
-        1,查看是否已经全局配置过.如果没有,则提示用户先运行gaoagent config. 返回.
-        2,查看全局 gao_client_api_config.json 文件是否存在. 不存在,则运行 _import_api_config 的逻辑,并写入全局 gao_client_api_config.json文件.如果没有加载任何一个api,则init失败,返回.
-        3,在当前目录创建.gaoagent目录
-        4,询问用户选择默认的api和模型(). 如果用户没有选择,则默认选择第一个api.写入.gaoagent目录 gao_client_api_config.json 配置文件.
-        5,展示已经加载的mcp服务,并提示用户选择mcp服务.用户可跳过.将选择好的mcp服务写入.gaoagent目录 gao_client_mcp_setting.json 配置文件.
-        6,展示已经加载的Skill,并提示用户选择Skill.用户可跳过.将选择好的Skill复制进.gaoagent下面的skills目录
-        7,显示已加载的全局 RAG 知识库并提示用户选择.用户可跳过.将选择好的知识库复制到项目 .gaoagent/rag 目录
-        8,如果当前项目目录下有 .gitignore 文件,则将.gaoagent目录添加到 .gitignore 文件中.
-        9,初始化完成.
-        10,创建项目索引,加速全局搜索
+        流程概览:
+        1. 校验全局目录 `~/.gaoagent` 是否存在；不存在则提示先执行 `gaoagent config`。
+        2. 禁止在用户 Home 根目录执行初始化，避免误把家目录当项目目录。
+        3. 清理项目注册表中的无效路径，保证全局索引干净。
+        4. 加载全局 API 配置；若缺失则进入交互采集；仍为空则初始化失败。
+        5. 创建项目 `.gaoagent` 目录并写入项目 API 配置（默认 API/模型 + apis）。
+        6. 读取全局 MCP 配置，交互选择后写入项目 MCP 配置。
+        7. 若选择了 MCP，尝试预生成并写入项目 MCP 工具缓存（加速后续运行）。
+        8. 交互选择全局 Skills，并复制到项目 `.gaoagent/skills`。
+        9. 交互选择全局 RAG 知识库，并复制到项目 `.gaoagent/rag`；
+           同步复制对应 Chroma 存储目录并修正 `index_meta.json` 的 `store_dir`。
+        10. 若存在 `.gitignore`，确保包含 `.gaoagent/`。
+        11. 注册当前项目到全局初始化项目列表，最后输出“初始化完成”。
+
+        返回:
+        - `None`。该方法通过文件系统副作用与终端输出体现结果。
         """
         global_dir = Path.home() / ".gaoagent"
         if not global_dir.exists():
@@ -129,6 +150,16 @@ class CoreInit:
         return None
 
     def _load_global_apis(self, config_default: CoreConfigDefault, api_file: Path) -> dict[str, Any]:
+        """加载全局 API 配置；必要时进入交互采集。
+
+        行为:
+        - 优先读取 `api_file` 内的 `apis` 字段。
+        - 若无可用配置，则循环调用 `config_default._import_api_config()` 采集。
+        - 对 API 名称做去重校验，采集一条即落盘一次，避免中途退出丢数据。
+
+        返回:
+        - `dict[str, Any]`：可直接写入项目配置的 API 配置映射。
+        """
         apis: dict[str, Any] = {}
         payload = config_default._read_json(api_file)
         if isinstance(payload, dict) and isinstance(payload.get("apis"), dict):
@@ -169,6 +200,16 @@ class CoreInit:
         return apis
 
     def _prompt_default_api_and_model(self, apis: dict[str, Any]) -> tuple[str, str]:
+        """交互选择项目默认 API 与默认模型。
+
+        规则:
+        - API 与模型列表均按名称排序，首项作为默认值。
+        - 当候选项超过 1 个时，弹出 `click.prompt` 让用户选择。
+        - 若选中 API 没有任何模型，抛出 `RuntimeError` 阻止写入非法配置。
+
+        返回:
+        - `(default_api, default_model)` 二元组。
+        """
         api_names = sorted([str(x) for x in apis.keys()])
         default_api = api_names[0]
         if len(api_names) > 1:
@@ -197,6 +238,11 @@ class CoreInit:
         return (default_api, default_model)
 
     def _load_global_mcp_configs(self, config_default: CoreConfigDefault, mcp_file: Path) -> dict[str, Any]:
+        """读取全局 MCP 配置并返回 `mcpServers` 映射。
+
+        返回:
+        - `dict[str, Any]`：服务名到配置体的映射；无配置时返回空字典。
+        """
         payload = config_default._read_json(mcp_file)
         if isinstance(payload, dict):
             if isinstance(payload.get("mcpServers"), dict):
@@ -204,6 +250,14 @@ class CoreInit:
         return {}
 
     def _prompt_select_mcp(self, mcp_configs: dict[str, Any]) -> dict[str, Any]:
+        """交互选择要写入项目配置的 MCP 服务子集。
+
+        交互方式:
+        - 先展示可选服务列表，再调用 `_prompt_multi_select()` 支持序号/名称/all 输入。
+
+        返回:
+        - 仅包含用户选中项的 MCP 配置字典；跳过时返回空字典。
+        """
         if not mcp_configs:
             click.echo("未检测到任何全局 MCP 配置（将写入空配置）")
             return {}
@@ -220,6 +274,16 @@ class CoreInit:
         return {name: mcp_configs[name] for name in selected}
 
     def _prompt_select_skills(self, config_default: CoreConfigDefault, skills_dir: Path) -> list[dict[str, Any]]:
+        """读取全局 Skill 元数据并让用户选择要安装到项目的 Skill。
+
+        处理细节:
+        - 调用 `CoreConfigDefault._load_skills_metadata()` 解析 `SKILL.md`。
+        - 对不合规 Skill 给出提示，但不阻断其余合法 Skill 的选择流程。
+        - 使用 `_prompt_multi_select()` 进行多选，最后返回选中 Skill 元数据。
+
+        返回:
+        - `list[dict[str, Any]]`：每项包含 Skill 名称、描述、源目录等信息。
+        """
         if not skills_dir.exists() or not skills_dir.is_dir():
             click.echo(f"未检测到全局 Skills 目录：{skills_dir}（已跳过）")
             return []
@@ -250,6 +314,15 @@ class CoreInit:
         return [item for item in skills if item["name"] in selected_set]
 
     def _prompt_select_rag(self, rag_dir: Path) -> list[str]:
+        """交互选择要导入项目的全局 RAG 知识库名称。
+
+        规则:
+        - 仅展示目录型知识库，且过滤内部管理目录（如 `.chrome_store`）。
+        - 支持输入序号/名称/all；回车表示跳过。
+
+        返回:
+        - `list[str]`：选中的知识库名称列表。
+        """
         if not rag_dir.exists() or not rag_dir.is_dir():
             click.echo(f"未检测到全局 RAG 目录：{rag_dir}（已跳过）")
             return []
@@ -269,6 +342,17 @@ class CoreInit:
         )
 
     def _prompt_multi_select(self, prompt: str, options: list[str]) -> list[str]:
+        """通用多选输入解析器（支持序号、名称与全选）。
+
+        输入规则:
+        - 回车: 返回空列表（表示跳过）。
+        - `all`/`*`: 返回全部选项。
+        - `1,3` 或 `nameA,nameB`: 支持逗号分隔混合输入。
+        - 非法输入会提示并重试，直到获得合法结果。
+
+        返回:
+        - 去重且保持输入顺序的选项列表。
+        """
         if not options:
             return []
 
@@ -316,16 +400,32 @@ class CoreInit:
             click.echo("输入不合法，请重新输入")
 
     def _write_json(self, file_path: Path, payload: Any) -> None:
+        """以“临时文件替换”方式原子写入 JSON 文件。
+
+        目的:
+        - 避免直接覆盖目标文件时出现部分写入，提升配置写入稳定性。
+        """
         tmp_file = file_path.with_name(f"{file_path.name}.tmp")
         tmp_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
         tmp_file.replace(file_path)
 
     def _copy_dir(self, src: Path, dst: Path) -> None:
+        """复制目录到目标路径；若目标已存在则先删除后复制。
+
+        说明:
+        - 使用“覆盖式复制”保证目标内容与源目录一致，避免增量残留脏文件。
+        """
         if dst.exists():
             shutil.rmtree(dst)
         shutil.copytree(src, dst)
 
     def _rewrite_index_meta_store_dir(self, *, kb_dir: Path, kb_name: str) -> None:
+        """修正 `index_meta.json` 中的 `store_dir` 到当前项目实际路径。
+
+        使用场景:
+        - 从全局目录复制知识库到项目目录后，原 `store_dir` 往往仍指向旧位置。
+        - 本方法确保元数据指向新目录，避免后续查询仍访问旧存储。
+        """
         meta_file = resolve_index_meta_file(kb_dir=kb_dir, kb_name=kb_name)
         if not meta_file.exists() or not meta_file.is_file():
             return
@@ -342,6 +442,12 @@ class CoreInit:
         )
 
     def _ensure_gitignore_contains(self, project_root: Path, entry: str) -> None:
+        """确保项目 `.gitignore` 包含指定条目（如 `.gaoagent/`）。
+
+        规则:
+        - 若 `.gitignore` 不存在或不可读，静默返回。
+        - 若已存在等价条目（含带 `/` 或前缀 `/` 形式），不重复写入。
+        """
         gitignore = project_root / ".gitignore"
         if not gitignore.exists() or not gitignore.is_file():
             return None
@@ -363,9 +469,16 @@ class CoreInit:
         return None
 
     def _project_registry_file(self, global_dir: Path) -> Path:
+        """返回“已初始化项目注册表”文件路径。"""
         return global_dir / self._PROJECTS_REGISTRY_FILENAME
 
     def _cleanup_project_registry(self, registry_file: Path) -> list[Path]:
+        """清理注册表中的失效项目路径并返回保留结果。
+
+        判定有效条件:
+        - 项目根目录存在且为目录。
+        - 项目下 `.gaoagent` 目录存在。
+        """
         existing = self._load_project_registry(registry_file)
         valid: list[Path] = []
         for root in existing:
@@ -376,6 +489,7 @@ class CoreInit:
         return valid
 
     def _register_project_root(self, registry_file: Path, project_root: Path) -> None:
+        """将当前项目根目录写入注册表（若不存在则追加）。"""
         roots = self._cleanup_project_registry(registry_file)
         normalized = project_root.resolve()
         if normalized not in roots:
@@ -383,6 +497,11 @@ class CoreInit:
             self._write_project_registry(registry_file, roots)
 
     def _load_project_registry(self, registry_file: Path) -> list[Path]:
+        """读取并解析项目注册表文件，返回去重后的项目路径列表。
+
+        容错行为:
+        - 文件不存在、读取失败、单行路径非法时均跳过，不抛异常中断初始化。
+        """
         if not registry_file.exists() or not registry_file.is_file():
             return []
         try:
@@ -407,6 +526,7 @@ class CoreInit:
         return paths
 
     def _write_project_registry(self, registry_file: Path, roots: list[Path]) -> None:
+        """将项目路径列表去重后写入注册表文件。"""
         registry_file.parent.mkdir(parents=True, exist_ok=True)
         deduped: list[str] = []
         seen: set[str] = set()

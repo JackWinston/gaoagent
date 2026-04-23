@@ -29,4 +29,9 @@ def resolve_index_meta_file(*, kb_dir: Path, kb_name: str) -> Path:
 
 
 def is_internal_rag_store_dir_name(name: str) -> bool:
-    return name.strip()  == ".chrome_store"
+    """判断目录名是否为 RAG 内部管理目录。
+
+    用途:
+    - 在 `rag list`、知识库扫描等用户可见场景中过滤内部目录，避免混入业务列表。
+    """
+    return name.strip() == ".chrome_store"

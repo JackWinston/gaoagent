@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from gaoagent.core.runner.BaseRunner import Decision
@@ -13,6 +12,18 @@ def build_function_specs(
     *,
     mcp_exported_map: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    """build_function_specs 函数。
+    
+    用途:
+    - 给模型提供函数调用的规格, 用于在运行时动态调用外部函数.
+    
+    参数:
+    - tool_names: 本地定义的函数名称列表
+    - mcp_exported_map: MCP函数映射表, 用于在运行时调用外部函数.
+    
+    返回:
+    - list[dict[str, Any]]: 返回模型需要的函数调用规格列表.
+    """
     known: dict[str, dict[str, Any]] = {
         "list_dir": {
             "description": "获取目录下的文件/子目录列表（默认列出当前工作目录）。",
@@ -166,6 +177,17 @@ def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
 
     def strip_code_fence(text: str) -> str:
         # 兼容模型把 JSON 包在 ```json ... ``` 中的输出形态。
+        """strip_code_fence 函数。
+        
+        用途:
+        - 移除模型输出中的代码围栏, 仅保留 JSON 内容.
+        
+        参数:
+        - text: 模型输出的文本, 可能包含代码围栏.
+        
+        返回:
+        - str: 返回移除代码围栏后的 JSON 内容.
+        """
         s = (text or "").strip()
         if not s.startswith("```"):
             return s
@@ -183,6 +205,17 @@ def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
 
     def normalize_protocol_dict(data: dict[str, Any]) -> dict[str, Any]:
         # 对历史/别名字段做归一化，降低上层协议分支复杂度。
+        """normalize_protocol_dict 函数。
+        
+        用途:
+        - 对历史/别名字段做归一化， 用于在上层协议分支中统一处理.
+        
+        参数:
+        - data: 输入的协议字典, 包含 type 字段.
+        
+        返回:
+        - dict[str, Any]: 返回归一化后的协议字典.
+        """
         out = dict(data)
         t = out.get("type")
         if t == "final_answer":
@@ -193,6 +226,17 @@ def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
 
     def parse_json_object_sequence(text: str) -> list[dict[str, Any]]:
         # 支持连续对象输出：{"type":"thought"}{"type":"final"}。
+        """parse_json_object_sequence 函数。
+        
+        用途:
+        - 解析连续 JSON 对象序列, 支持 thought/final 类型.
+        
+        参数:
+        - text: 输入的 JSON 对象序列文本, 可能包含多个对象.
+        
+        返回:
+        - list[dict[str, Any]]: 返回解析后的对象列表.
+        """
         decoder = json.JSONDecoder()
         idx = 0
         n = len(text)
@@ -284,6 +328,17 @@ def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def parse_tool_arguments(raw: Any) -> dict[str, Any]:
+    """parse_tool_arguments 函数。
+    
+    用途:
+    - 解析工具调用参数, 支持 JSON 格式.
+    
+    参数:
+    - raw: 输入的工具调用参数文本.
+    
+    返回:
+    - dict[str, Any]: 返回解析后的参数字典.
+    """
     if isinstance(raw, dict):
         return raw
     if isinstance(raw, str):
@@ -301,6 +356,19 @@ def parse_tool_arguments(raw: Any) -> dict[str, Any]:
 
 
 def protocol_to_decision(step: int, tool_names: set[str], payload: Any) -> Decision:
+    """protocol_to_decision 函数。
+    
+    用途:
+    - 将协议字典转换为 Decision 对象, 用于在执行器中使用.
+    
+    参数:
+    - step: 当前步骤编号.
+    - tool_names: 工具名称集合.
+    - payload: 输入的协议字典.
+    
+    返回:
+    - Decision: 返回转换后的 Decision 对象.
+    """
     if not isinstance(payload, dict):
         return Decision(kind="final", final=f"LLM 响应必须是对象，实际是：{type(payload).__name__}")
 
@@ -342,6 +410,19 @@ def protocol_to_decision(step: int, tool_names: set[str], payload: Any) -> Decis
 
 
 def http_error_to_final(status: int, reason: str, body: str) -> dict[str, Any]:
+    """http_error_to_final 函数。
+    
+    用途:
+    - 将 HTTP 错误转换为 final 动作.
+    
+    参数:
+    - status: HTTP 状态码.
+    - reason: 错误原因.
+    - body: 输入的错误响应体.
+    
+    返回:
+    - dict[str, Any]: 返回转换后的 final 动作字典.  
+    """
     return {
         "type": "final",
         "content": f"LLM HTTPError: status={status}, reason={reason}, body={truncate_text(body, 500)}",

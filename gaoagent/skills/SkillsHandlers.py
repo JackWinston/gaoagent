@@ -10,9 +10,25 @@ from gaoagent.core.runner.Utils import scan_skills_metadata
 
 
 class SkillsHandlers:
+    """Skill 命令处理器（`gaoagent skills` 子命令入口）。
+
+    定位:
+    - 负责 Skill 的展示、安装、卸载等 CLI 交互流程。
+    - 根据当前工作目录自动判定项目作用域或全局作用域。
+
+    核心职责:
+    - 列出可用 Skill 元数据（名称、描述）并提示不合规 Skill 文件。
+    - 在项目中从全局 Skill 仓库批量安装 Skill。
+    - 在项目中卸载已安装 Skill。
+
+    边界:
+    - 不负责 Skill 的运行时执行，仅负责文件级管理与元数据校验展示。
+    - Skill 元数据解析依赖 `scan_skills_metadata()`。
+    """
     _PROJECTS_REGISTRY_FILENAME = "inited_projects.txt"
 
     def list(self) -> None:
+        """列出当前作用域（项目或全局）下的 Skill 列表。"""
         (scope, skills_dir) = self._resolve_scope_and_paths()
         if not skills_dir.exists() or not skills_dir.is_dir():
             click.echo(f"未检测到{scope} Skills 目录：{skills_dir}")
@@ -30,6 +46,17 @@ class SkillsHandlers:
             click.echo(f"{idx}. {name} - {skill.get('description', '')}")
 
     def install(self, name: str | None = None) -> None:
+        """从全局 Skill 仓库安装 Skill 到当前项目。
+
+        参数:
+        - `name`: 指定要安装的 Skill 名称；为空时进入多选交互。
+
+        安装流程:
+        - 校验全局 Skill 目录与当前项目根目录是否存在。
+        - 展示可安装 Skill 列表并解析用户选择。
+        - 将选中 Skill 复制到 `项目/.gaoagent/skills`。
+        - 目标已存在时跳过并提示，不覆盖已有内容。
+        """
         global_dir = self._global_config_dir() / "skills"
         if not global_dir.exists() or not global_dir.is_dir():
             click.echo(f"未检测到全局 Skills 目录：{global_dir}")
@@ -78,6 +105,14 @@ class SkillsHandlers:
             click.echo(f"成功安装 {installed_count} 个 Skill 到项目目录：{project_skills_dir}")
 
     def uninstall(self, name: str | None = None) -> None:
+        """卸载当前项目中的 Skill。
+
+        参数:
+        - `name`: 目标 Skill 名称；为空时交互选择。
+
+        约束:
+        - 仅允许在项目作用域执行卸载；全局作用域会直接拒绝。
+        """
         (scope, skills_dir) = self._resolve_scope_and_paths()
         if scope == "全局":
             click.echo("只能在项目中卸载 Skill。")
@@ -110,6 +145,7 @@ class SkillsHandlers:
         click.echo(f"已卸载 Skill：{target}")
 
     def _resolve_scope_and_paths(self) -> tuple[str, Path]:
+        """解析当前操作作用域并返回对应 Skills 目录路径。"""
         project_root = self._detect_project_root()
         if project_root is not None:
             return (
@@ -122,12 +158,20 @@ class SkillsHandlers:
         )
 
     def _global_config_dir(self) -> Path:
+        """返回全局配置目录（`~/.gaoagent`）。"""
         return Path.home() / ".gaoagent"
 
     def _project_registry_file(self) -> Path:
+        """返回项目注册表文件路径。"""
         return self._global_config_dir() / self._PROJECTS_REGISTRY_FILENAME
 
     def _detect_project_root(self) -> Path | None:
+        """检测当前命令对应的项目根目录。
+
+        判定规则:
+        - 当前目录包含 `.gaoagent` 时直接命中。
+        - 否则从注册表中匹配当前路径的最深父目录。
+        """
         cwd = Path.cwd().resolve()
         if (cwd / ".gaoagent").is_dir():
             return cwd
@@ -146,6 +190,7 @@ class SkillsHandlers:
         return candidates[0]
 
     def _load_project_registry_paths(self) -> list[Path]:
+        """读取项目注册表并返回去重后的路径列表。"""
         registry_file = self._project_registry_file()
         if not registry_file.exists() or not registry_file.is_file():
             return []
@@ -172,6 +217,7 @@ class SkillsHandlers:
         return roots
 
     def _get_skills_in_dir(self, skills_dir: Path) -> list[dict[str, Any]]:
+        """扫描目录并返回合法 Skill 元数据列表。"""
         if not skills_dir.exists() or not skills_dir.is_dir():
             return []
 
@@ -183,6 +229,7 @@ class SkillsHandlers:
         return skills
 
     def _prompt_skill_name(self, skills: list[dict[str, Any]], *, action: str) -> str | None:
+        """从候选 Skill 中交互选择一个目标名称。"""
         names = [s["name"] for s in skills]
         if not names:
             return None
@@ -197,6 +244,7 @@ class SkillsHandlers:
         return choice
 
     def _prompt_multi_select(self, prompt: str, options: list[str]) -> list[str]:
+        """通用多选输入解析器（支持序号/名称/all/回车跳过）。"""
         if not options:
             return []
 
@@ -244,6 +292,7 @@ class SkillsHandlers:
             click.echo("输入不合法，请重新输入")
 
     def _copy_dir(self, src: Path, dst: Path) -> None:
+        """目录覆盖复制：若目标已存在则先删除后复制。"""
         if dst.exists():
             shutil.rmtree(dst)
         shutil.copytree(src, dst)

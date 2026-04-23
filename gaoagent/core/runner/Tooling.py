@@ -12,6 +12,15 @@ from gaoagent.core.runner.Utils import safe_json_dumps
 
 @dataclass(frozen=True)
 class ToolCall:
+    """ToolCall 类。
+    
+    职责:
+    - 封装该模块内相关的业务能力与状态。
+    - 提供 ToolCall 语义下的方法集合，供上层流程协调调用。
+    
+    继承关系:
+    - 基类: 无
+    """
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
     description: str = ""
@@ -22,15 +31,59 @@ ToolHandler = Callable[[Any, dict[str, Any]], Any]
 
 
 class ToolRegistry:
+    """ToolRegistry 类。
+    
+    职责:
+    - 封装该模块内相关的业务能力与状态。
+    - 提供 ToolRegistry 语义下的方法集合，供上层流程协调调用。
+    
+    继承关系:
+    - 基类: 无
+    """
     def __init__(self) -> None:
+        """__init__ 方法。
+        
+        用途:
+        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
+        
+        参数:
+        - 无: 该方法不需要额外业务参数。
+        
+        返回:
+        - None: 构造函数仅完成实例初始化，不返回业务结果。
+        """
         self._tools: dict[str, ToolHandler] = {}
 
     def register(self, name: str, handler: ToolHandler) -> None:
+        """register 方法。
+        
+        用途:
+        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
+        
+        参数:
+        - name: 输入参数，用于控制该方法的处理行为。
+        - handler: 输入参数，用于控制该方法的处理行为。
+        
+        返回:
+        - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+        """
         if not name or not isinstance(name, str):
             raise ValueError("tool name must be non-empty str")
         self._tools[name] = handler
 
     def call(self, ctx: Any, call: ToolCall) -> str:
+        """call 方法。
+        
+        用途:
+        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
+        
+        参数:
+        - ctx: 输入参数，用于控制该方法的处理行为。
+        - call: 输入参数，用于控制该方法的处理行为。
+        
+        返回:
+        - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+        """
         handler = self._tools.get(call.name)
         if handler is None:
             raise KeyError(f"tool not found: {call.name}")
@@ -43,13 +96,47 @@ class ToolRegistry:
         return content
 
     def list_names(self) -> list[str]:
+        """list_names 方法。
+        
+        用途:
+        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
+        
+        参数:
+        - 无: 该方法不需要额外业务参数。
+        
+        返回:
+        - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+        """
         return sorted(self._tools.keys())
 
 
 def default_tool_registry() -> ToolRegistry:
+    """default_tool_registry 函数。
+    
+    用途:
+    - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
+    
+    参数:
+    - 无: 该方法不需要额外业务参数。
+    
+    返回:
+    - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+    """
     tools = ToolRegistry()
 
     def _list_dir(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+        """_list_dir 函数。
+        
+        用途:
+        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
+        
+        参数:
+        - _ctx: 输入参数，用于控制该函数的处理行为。
+        - args: 输入参数，用于控制该函数的处理行为。
+        
+        返回:
+        - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+        """
         path = args.get("path", ".")
         if not isinstance(path, str) or not path.strip():
             return {
@@ -108,6 +195,18 @@ def default_tool_registry() -> ToolRegistry:
             }
 
     def _read_file(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+        """_read_file 函数。
+        
+        用途:
+        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
+        
+        参数:
+        - _ctx: 输入参数，用于控制该函数的处理行为。
+        - args: 输入参数，用于控制该函数的处理行为。
+        
+        返回:
+        - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+        """
         path = args.get("path")
         encoding = args.get("encoding") or "utf-8"
         if not isinstance(path, str) or not path.strip():
@@ -145,6 +244,18 @@ def default_tool_registry() -> ToolRegistry:
             }
 
     def _ask_user(_ctx: Any, args: dict[str, Any]) -> str:
+        """_ask_user 函数。
+        
+        用途:
+        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
+        
+        参数:
+        - _ctx: 输入参数，用于控制该函数的处理行为。
+        - args: 输入参数，用于控制该函数的处理行为。
+        
+        返回:
+        - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+        """
         prompt = args.get("prompt")
         default = args.get("default", None)
         choices = args.get("choices", None)
@@ -197,6 +308,18 @@ def default_tool_registry() -> ToolRegistry:
             )
 
     def _write_file(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+        """_write_file 函数。
+        
+        用途:
+        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
+        
+        参数:
+        - _ctx: 输入参数，用于控制该函数的处理行为。
+        - args: 输入参数，用于控制该函数的处理行为。
+        
+        返回:
+        - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+        """
         path = args.get("path")
         content = args.get("content", "")
         encoding = args.get("encoding") or "utf-8"
@@ -253,6 +376,18 @@ def default_tool_registry() -> ToolRegistry:
             }
 
     def _run_command(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+        """_run_command 函数。
+        
+        用途:
+        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
+        
+        参数:
+        - _ctx: 输入参数，用于控制该函数的处理行为。
+        - args: 输入参数，用于控制该函数的处理行为。
+        
+        返回:
+        - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+        """
         workdir = args.get("workdir")
         command = args.get("command")
         if not isinstance(workdir, str) or not workdir.strip():
@@ -338,6 +473,18 @@ def default_tool_registry() -> ToolRegistry:
             }
 
     def _rag_search(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+        """_rag_search 函数。
+        
+        用途:
+        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
+        
+        参数:
+        - _ctx: 输入参数，用于控制该函数的处理行为。
+        - args: 输入参数，用于控制该函数的处理行为。
+        
+        返回:
+        - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+        """
         kb_name = args.get("kb_name")
         query = args.get("query")
         top_k = args.get("top_k", 5)

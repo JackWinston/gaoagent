@@ -94,6 +94,9 @@ class RequestBaseInfo:
 
 class BaseRunner:
 
+    """BaseRunner 类。
+    这是所有 Runner 类的基类, 提供了基本的运行逻辑和状态管理.
+    """
     def __init__(
         self,
         *,
@@ -116,9 +119,25 @@ class BaseRunner:
         raise NotImplementedError("BaseRunner 是一个抽象类, 请实现 decide 方法")
 
     def run(self, question: str) -> RunResult:
+        """run 方法。
+        
+        - 这个类一般是一个循环, 用于处理用户的问题并生成回复.
+        
+        参数:
+        - question: 用户的初始问题
+        
+        返回:
+        - RunResult: 返回任务的运行结果, 包括是否成功完成, 最终结果, 错误信息等.
+        """
         raise NotImplementedError("BaseRunner 是一个抽象类, 请实现 run 方法")
 
 
 def _getDefaultRequestBaseInfo() -> RequestBaseInfo | None:
     # 从本地环境变量或者配置文件中获取默认的 RequestBaseInfo
+    """
+    _getDefaultRequestBaseInfo 函数。
+    用途:
+    - 加载默认的请求基础信息, 用于初始化 Runner 时使用.
+    
+    """
     return load_request_base_info()

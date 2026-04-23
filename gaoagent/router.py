@@ -7,13 +7,26 @@ from gaoagent.core.CoreHandlers import CoreHandlers
 from gaoagent.rag.RagHandlers import RagHandlers
 from gaoagent.skills.SkillsHandlers import SkillsHandlers
 from gaoagent.mcp.MCPHandlers import MCPHandlers
+from gaoagent.api.ApiHandlers import ApiHandlers
 
 @dataclass(frozen=True)
 class Route:
+    """路由描述对象。
+
+    作用:
+    - 将一个字符串 action 映射到具体处理器类与方法名。
+    - 通过 `factory` 延迟创建处理器实例，避免模块导入时就初始化全部 Handler。
+    """
     factory: Callable[[], object]
     method_name: str
 
     def dispatch(self, **kwargs: object) -> None:
+        """执行当前路由。
+
+        行为:
+        - 调用 `factory()` 创建目标 Handler。
+        - 通过 `method_name` 反射获取方法并透传 `kwargs` 执行。
+        """
         target = self.factory()
         method = getattr(target, self.method_name)
         method(**kwargs)
@@ -40,10 +53,25 @@ ROUTES: dict[str, Route] = {
     "rag.add": Route(factory=RagHandlers, method_name="add"),
     "rag.remove": Route(factory=RagHandlers, method_name="remove"),
     "rag.search": Route(factory=RagHandlers, method_name="search"),
+
+    "api.list": Route(factory=ApiHandlers, method_name="list"),
+    "api.add": Route(factory=ApiHandlers, method_name="add"),
+    "api.remove": Route(factory=ApiHandlers, method_name="remove"),
+    "api.edit": Route(factory=ApiHandlers, method_name="edit"),
+    "api.default": Route(factory=ApiHandlers, method_name="default"),
 }
 
 
 def dispatch(action: str, **kwargs: object) -> None:
+    """按 action 分发到对应业务处理器。
+
+    参数:
+    - `action`: 路由键，例如 `mcp.list`、`rag.add`。
+    - `kwargs`: 透传给目标 Handler 方法的参数。
+
+    异常:
+    - 未注册 action 时抛出 `KeyError`，由上层 CLI/调用方决定如何展示错误。
+    """
     route = ROUTES.get(action)
     if route is None:
         raise KeyError(f"Unknown action: {action}")

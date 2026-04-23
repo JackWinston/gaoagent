@@ -26,6 +26,13 @@ def _config_dir() -> Path:
 
 
 def _sanitize_token(value: str) -> str:
+    """将任意字符串规范化为 MCP 导出名可用 token。
+
+    规则:
+    - 仅保留字母、数字、下划线、短横线。
+    - 连续非法字符折叠为单个 `_`，并去除首尾 `_`。
+    - 结果为空时回退为 `"x"`。
+    """
     s = re.sub(r"[^a-zA-Z0-9_-]+", "_", value.strip())
     s = re.sub(r"_+", "_", s).strip("_")
     return s or "x"
@@ -68,6 +75,7 @@ def _run_coro(coro: Any) -> Any:
     error: BaseException | None = None
 
     def runner() -> None:
+        """线程入口：在子线程中执行协程并捕获异常。"""
         nonlocal result, error
         try:
             result = asyncio.run(coro)
@@ -84,6 +92,12 @@ def _run_coro(coro: Any) -> Any:
 
 @dataclass(frozen=True)
 class MCPServerConfig:
+    """MCP 服务配置的数据模型（宽松输入、严格产出）。
+
+    用途:
+    - 作为配置解析后的中间标准结构，统一字段类型，减少后续分支判断复杂度。
+    - 支持 `stdio`、`sse`、`streamable_http` 三类 transport 共同字段。
+    """
     type: str
     command: str = ""
     args: list[str] = field(default_factory=list)
@@ -95,6 +109,13 @@ class MCPServerConfig:
 
     @staticmethod
     def from_dict(payload: dict[str, Any]) -> "MCPServerConfig":
+        """从原始 JSON 配置解析为 `MCPServerConfig`。
+
+        解析特性:
+        - 对 `timeout` 做字符串/整数兼容解析。
+        - 对 `args/env/headers` 做类型过滤，避免非字符串污染底层调用。
+        - `disabled` 仅在值显式为 `True` 时生效。
+        """
         timeout_raw = payload.get("timeout")
         timeout_value: int | None = None
         if isinstance(timeout_raw, int) and not isinstance(timeout_raw, bool):
@@ -133,6 +154,17 @@ class MCPServerConfig:
 
 
 class MCPStdioClientSync:
+    """MCP 同步客户端兼容层（面向同步业务代码）。
+
+    设计背景:
+    - 官方 MCP SDK 以 async API 为主，而 Runner/CLI 以同步流程为主。
+    - 本类将 connect/list/call 封装为同步接口，内部通过 `_run_coro()` 执行协程。
+
+    支持传输:
+    - `stdio`: 启动本地进程作为 MCP 服务端。
+    - `sse`: 通过 SSE 连接远端服务。
+    - `streamable_http`: 通过流式 HTTP 连接远端服务。
+    """
     def __init__(
         self,
         *,
@@ -145,6 +177,7 @@ class MCPStdioClientSync:
         headers: dict[str, str] | None,
         timeout: int | None,
     ) -> None:
+        """构造同步 MCP 客户端对象（仅保存配置，不发起连接）。"""
         self.server_name = server_name
         self.transport_type = transport_type
         self.command = command
@@ -156,6 +189,7 @@ class MCPStdioClientSync:
 
     @staticmethod
     def from_config(*, server_name: str, config: dict[str, Any]) -> "MCPStdioClientSync":
+        """从配置字典构建客户端，并执行 transport 级前置校验。"""
         cfg = MCPServerConfig.from_dict(config)
         transport_type = cfg.type.strip().lower()
         if transport_type not in ("stdio", "sse", "streamable_http"):
@@ -182,6 +216,7 @@ class MCPStdioClientSync:
         返回结构与缓存结构对齐：name/description/inputSchema。
         """
         async def _inner() -> list[dict[str, Any]]:
+            """异步内部实现：建立连接并拉取可用工具列表。"""
             (ClientSession, StdioServerParameters, stdio_client, sse_client, streamablehttp_client) = _import_sdk()
             if self.transport_type == "stdio":
                 # 合并进程环境与用户配置，既支持额外变量，也不丢失 PATH 等基础变量。
@@ -209,6 +244,7 @@ class MCPStdioClientSync:
     def call_tool(self, *, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """调用指定 MCP 工具并归一化返回值。"""
         async def _inner() -> dict[str, Any]:
+            """异步内部实现：连接服务并执行一次工具调用。"""
             (ClientSession, StdioServerParameters, stdio_client, sse_client, streamablehttp_client) = _import_sdk()
             if self.transport_type == "stdio":
                 # 合并进程环境与用户配置，既支持额外变量，也不丢失 PATH 等基础变量。
@@ -248,6 +284,13 @@ class MCPStdioClientSync:
 
 
 def _extract_tools(tools_result: Any) -> list[dict[str, Any]]:
+    """从 SDK `list_tools` 返回对象中提取稳定工具结构。
+
+    标准字段:
+    - `name`
+    - `description`
+    - `inputSchema`
+    """
     items: list[dict[str, Any]] = []
     raw_tools = getattr(tools_result, "tools", None)
     if isinstance(raw_tools, list):
@@ -300,6 +343,7 @@ def _serialize_call_result(result: Any) -> dict[str, Any]:
 
 def _import_sdk():
     # 仅使用官方 `mcp` SDK。
+    """延迟导入官方 MCP SDK；缺失时抛出可读错误。"""
     try:
         from mcp import ClientSession, StdioServerParameters  # type: ignore
         from mcp.client.stdio import stdio_client  # type: ignore
@@ -318,12 +362,19 @@ def build_mcp_tools_cache_payload(
     connect_and_list_tools: Callable[[str, dict[str, Any]], list[dict[str, Any]]],
     generated_at: str,
 ) -> dict[str, Any]:
-    """
-    构建 MCP 工具缓存载荷。
+    """构建 MCP 工具缓存载荷（供配置期写盘与运行期查表）。
 
-    核心产物：
-    - `servers`: 每个 server 的工具明细（便于排查）
-    - `exported_map`: 导出工具名 -> server/tool/schema 映射（运行时查表）
+    输入:
+    - `mcp_servers`: MCP 服务配置映射。
+    - `connect_and_list_tools`: 由调用方提供的“连接并列工具”函数，便于测试与复用。
+    - `generated_at`: 缓存生成时间戳字符串。
+
+    输出:
+    - `servers`: 每个服务的工具明细或错误信息，便于排障。
+    - `exported_map`: 导出工具名到真实 server/tool/schema 的映射，供运行时路由。
+
+    冲突处理:
+    - 当导出名冲突时自动追加 `__2/__3/...` 后缀，保证映射键唯一。
     """
     servers: dict[str, Any] = {}
     exported_map: dict[str, Any] = {}

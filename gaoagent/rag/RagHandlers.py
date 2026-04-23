@@ -46,8 +46,18 @@ class RagHandlers:
 
         global_rag_dir = self._global_rag_dir()
         global_rag_dir.mkdir(parents=True, exist_ok=True)
-        self._copy_dir(project_rag_dir / kb_name, global_rag_dir / kb_name)
-        click.echo(f"已同步知识库到全局目录：{global_rag_dir / kb_name}")
+        src_dir = project_rag_dir / kb_name
+        dst_dir = global_rag_dir / kb_name
+        if dst_dir.exists():
+            should_overwrite = click.confirm(
+                f"全局知识库已存在：{dst_dir}，是否覆盖？",
+                default=False,
+            )
+            if not should_overwrite:
+                click.echo(f"已跳过同步到全局目录：{dst_dir}")
+                return
+        self._copy_dir(src_dir, dst_dir)
+        click.echo(f"已同步知识库到全局目录：{dst_dir}")
 
     def remove(self, name: str | None = None) -> None:
         (scope, rag_dir) = self._resolve_scope_and_rag_dir()

@@ -318,7 +318,6 @@ class CoreConfigDefault:
             return False
 
         selected_name = (kb_name or "").strip()
-        created_new_dir = False
         while True:
             if not selected_name:
                 selected_name = self._prompt_non_empty_str("请输入知识库名称")
@@ -337,11 +336,13 @@ class CoreConfigDefault:
                     click.echo(f"知识库目录已存在，将直接复用：{kb_dir}")
                 break
             kb_dir.mkdir(parents=True, exist_ok=False)
-            created_new_dir = True
             break
 
         click.echo(f"请将需要入库的文件复制到目录：{kb_dir}")
-        click.confirm("是否已经完成文件复制？", default=False)
+        copied = click.confirm("是否已经完成文件复制？", default=False)
+        if not copied:
+            click.echo("已取消创建知识库（未执行入库）")
+            return False
 
         (ok, reason) = self._build_rag_vector_store(
             kb_name=selected_name,
@@ -349,8 +350,8 @@ class CoreConfigDefault:
             chunker_py_file=chunker_py_file,
         )
         if not ok:
-            if created_new_dir and kb_dir.exists() and kb_dir.is_dir():
-                shutil.rmtree(kb_dir)
+            # 入库失败时仅清理本次生成的索引产物，保留用户源文件。
+            self._remove_rag_artifacts(kb_dir)
             if reason:
                 click.echo(f"知识库创建失败：{reason}")
             else:
@@ -385,6 +386,16 @@ class CoreConfigDefault:
                 shutil.copy2(src, dst)
             count += 1
         return count
+
+    def _remove_rag_artifacts(self, kb_dir: Path) -> None:
+        targets = [kb_dir / "chroma_db", kb_dir / "index_meta.json"]
+        for p in targets:
+            if not p.exists():
+                continue
+            if p.is_dir():
+                shutil.rmtree(p)
+            else:
+                p.unlink(missing_ok=True)
 
     def _build_rag_vector_store(
         self,

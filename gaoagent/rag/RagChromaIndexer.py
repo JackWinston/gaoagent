@@ -364,8 +364,7 @@ class RagChromaIndexer:
         Authorization: Bearer {remote_api_key}
         {"model": "...", "input": [...]}
         """
-        base = self._config.remote_base_url.strip().rstrip("/")
-        url = f"{base}/v1/embeddings"
+        url = self._build_remote_embeddings_url(self._config.remote_base_url)
         payload = json.dumps(
             {
                 "model": self._config.remote_embedding_model,
@@ -403,6 +402,17 @@ class RagChromaIndexer:
                 f"远程 embedding 数量不匹配：expect={len(texts)}, actual={len(embeddings)}"
             )
         return embeddings
+
+    def _build_remote_embeddings_url(self, base_url: str) -> str:
+        """
+        兼容两类 base_url：
+        - https://host
+        - https://host/v1
+        """
+        base = base_url.strip().rstrip("/")
+        if base.endswith("/v1"):
+            return f"{base}/embeddings"
+        return f"{base}/v1/embeddings"
 
     def _parse_remote_embeddings(self, *, data: Any, expect_count: int, raw: str) -> list[list[float]]:
         """

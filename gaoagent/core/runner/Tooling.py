@@ -337,9 +337,27 @@ def default_tool_registry() -> ToolRegistry:
                 "command": str(command),
             }
 
+    def _rag_search(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+        kb_name = args.get("kb_name")
+        query = args.get("query")
+        top_k = args.get("top_k", 5)
+        
+        if not isinstance(kb_name, str) or not kb_name.strip():
+            return {"success": False, "error": "kb_name 不能为空"}
+        if not isinstance(query, str) or not query.strip():
+            return {"success": False, "error": "query 不能为空"}
+            
+        try:
+            from gaoagent.rag.RagChromaRetriever import RagChromaRetriever
+            retriever = RagChromaRetriever(kb_name=kb_name)
+            return retriever.search(query=query, top_k=int(top_k))
+        except Exception as e:
+            return {"success": False, "error": f"检索异常：{str(e)}"}
+
     tools.register("list_dir", _list_dir)
     tools.register("read_file", _read_file)
     tools.register("ask_user", _ask_user)
     tools.register("write_file", _write_file)
     tools.register("run_command", _run_command)
+    tools.register("rag_search", _rag_search)
     return tools

@@ -40,6 +40,7 @@ ROUTES: dict[str, Route] = {
     "rag.list": Route(factory=RagHandlers, method_name="list"),
     "rag.add": Route(factory=RagHandlers, method_name="add"),
     "rag.remove": Route(factory=RagHandlers, method_name="remove"),
+    "rag.search": Route(factory=RagHandlers, method_name="search"),
     "rag.api.list": Route(factory=RagHandlers, method_name="api_list"),
     "rag.api.add": Route(factory=RagHandlers, method_name="api_add"),
     "rag.api.edit": Route(factory=RagHandlers, method_name="api_edit"),

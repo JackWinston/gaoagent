@@ -175,6 +175,30 @@ class RagHandlers:
         store.save(payload)
         click.echo(f"已移除远程 embedding 配置：{target}")
 
+    def search(self, kb_name: str, query: str, top_k: int = 5) -> None:
+        from gaoagent.rag.RagChromaRetriever import RagChromaRetriever
+        
+        click.echo(f"正在知识库 '{kb_name}' 中检索: {query} (top_k={top_k})...")
+        retriever = RagChromaRetriever(kb_name=kb_name)
+        res = retriever.search(query=query, top_k=top_k)
+        
+        if not res.get("success"):
+            click.echo(f"检索失败: {res.get('error')}")
+            return
+            
+        items = res.get("items", [])
+        if not items:
+            click.echo("未找到相关内容。")
+            return
+            
+        for idx, item in enumerate(items, 1):
+            doc = str(item.get("document", "")).replace("\n", " ")[:150]
+            dist = item.get("distance", 0)
+            meta = item.get("metadata", {})
+            src = meta.get("source_file", "unknown")
+            click.echo(f"\n[{idx}] (相似度距离: {dist:.4f}) [来源: {src}]")
+            click.echo(f"    {doc}...")
+
     def _resolve_scope_and_rag_dir(self) -> tuple[str, Path]:
         project_root = self._detect_project_root()
         if project_root is not None:

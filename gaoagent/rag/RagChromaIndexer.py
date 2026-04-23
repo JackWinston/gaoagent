@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 import json
 import re
+import time
 import urllib.request
 import urllib.error
 
@@ -143,6 +144,9 @@ class RagChromaIndexer:
                     },
                 )
 
+            total_chunks = len(chunks)
+            total_batches = (total_chunks + self._config.batch_size - 1) // self._config.batch_size
+            print(f"[RAG] 开始写入向量：total={total_chunks}, batch_size={self._config.batch_size}, batches={total_batches}")
             for i in range(0, len(chunks), self._config.batch_size):
                 # 分批 add，减少单次请求体积，避免大文档时内存/请求过大。
                 batch = chunks[i: i + self._config.batch_size]
@@ -163,6 +167,23 @@ class RagChromaIndexer:
                         documents=docs,
                         metadatas=metas,
                     )
+                done = min(i + len(batch), total_chunks)
+                batch_no = (i // self._config.batch_size) + 1
+                progress = (done / total_chunks * 100.0) if total_chunks > 0 else 100.0
+                (healthy, health_reason) = self._check_vector_store_health_with_retry(
+                    store_dir=store_dir,
+                    collection_name=collection_name,
+                    expect_min_count=done,
+                    probe_ids=ids,
+                    max_retries=5,
+                    retry_interval_sec=1.0,
+                )
+                if not healthy:
+                    return (
+                        False,
+                        f"第 {batch_no}/{total_batches} 批写入后健康检查失败：{health_reason}",
+                    )
+                print(f"[RAG] 写入进度：done={done}/{total_chunks} ({progress:.2f}%)")
         except Exception as e:
             return (False, f"写入向量库失败：{e}")
 
@@ -470,6 +491,86 @@ class RagChromaIndexer:
         if not isinstance(value, list):
             raise RuntimeError("远程 embedding 向量格式错误：单条向量必须是数组")
         return [float(x) for x in value]
+
+    def _check_vector_store_health(
+        self,
+        *,
+        store_dir: Path,
+        collection_name: str,
+        expect_min_count: int,
+        probe_ids: list[str] | None = None,
+    ) -> tuple[bool, str]:
+        """
+        入库过程中的最小健康检查。
+
+        目标：
+        1) 能正常打开 collection；
+        2) count 至少达到当前应完成数量；
+        3) 当前批次至少有一条记录可读（优先探测本批首条 id）。
+        """
+        try:
+            from chromadb import PersistentClient
+        except Exception as e:
+            return (False, f"导入 chromadb 失败：{e}")
+
+        try:
+            client = PersistentClient(path=str(store_dir))
+            collection = client.get_collection(name=collection_name)
+            actual_count = int(collection.count())
+            if actual_count < expect_min_count:
+                return (
+                    False,
+                    f"chunk 数量不足：expect_at_least={expect_min_count}, actual={actual_count}",
+                )
+
+            if actual_count > 0:
+                # 优先探测当前批次 id，确保“刚写入”数据可读；没有传入则退化为首条探测。
+                if probe_ids:
+                    payload = collection.get(ids=[str(probe_ids[0])], include=["documents", "metadatas"])
+                else:
+                    payload = collection.get(include=["documents", "metadatas"], limit=1, offset=0)
+                ids = payload.get("ids")
+                if not isinstance(ids, list) or len(ids) < 1:
+                    return (False, "读取探测失败：collection.get 未返回有效 ids")
+            return (True, "")
+        except Exception as e:
+            return (False, str(e))
+
+    def _check_vector_store_health_with_retry(
+        self,
+        *,
+        store_dir: Path,
+        collection_name: str,
+        expect_min_count: int,
+        probe_ids: list[str] | None = None,
+        max_retries: int = 5,
+        retry_interval_sec: float = 1.0,
+    ) -> tuple[bool, str]:
+        """
+        健康检查重试包装。
+
+        默认最多重试 5 次（共执行 5 次检查），仍失败则返回最后一次错误。
+        """
+        attempts = max(1, max_retries)
+        last_reason = ""
+        for attempt in range(1, attempts + 1):
+            (ok, reason) = self._check_vector_store_health(
+                store_dir=store_dir,
+                collection_name=collection_name,
+                expect_min_count=expect_min_count,
+                probe_ids=probe_ids,
+            )
+            if ok:
+                if attempt > 1:
+                    print(f"[RAG] 向量库健康检查通过（第 {attempt}/{attempts} 次）")
+                return (True, "")
+
+            last_reason = reason
+            print(f"[RAG] 向量库健康检查失败（第 {attempt}/{attempts} 次）：{reason}")
+            if attempt < attempts:
+                time.sleep(max(0.0, retry_interval_sec))
+
+        return (False, f"重试 {attempts} 次后仍失败：{last_reason}")
 
     def _write_index_meta(self, *, kb_dir: Path, kb_name: str, source_file_count: int, chunk_count: int) -> None:
         """写入索引元信息，便于后续排查、展示与运维。"""

@@ -27,6 +27,11 @@ def build_react_system_text( *, tool_names: list[str] | None) -> str:
     available_tools = tool_names or []
     tool_line = " | ".join(available_tools) if available_tools else "无可用工具"
 
+    from gaoagent.core.runner.Utils import load_rag
+    rag_info = load_rag()
+    kb_list = rag_info.get("indexes", [])
+    kb_str = ", ".join(kb_list) if kb_list else "无"
+
     base_prompt = f"""
 
 你是一个严格遵循 ReAct 范式的智能代理（ReAct Agent），**优先使用自身知识库解答问题，仅在必要时调用工具**。
@@ -55,6 +60,11 @@ def build_react_system_text( *, tool_names: list[str] | None) -> str:
 3. **工具调用限制**：单次对话最多调用1次工具，禁止重复、无意义搜索。
 4. 无可用工具或工具无法获取有效信息：在 thought 中说明依据与限制，再输出 final。
 5. 仅在任务完成时输出 final；final 需直接回答用户问题，简洁完整。
+
+【RAG 检索与引用规则】
+当前可用 RAG 知识库：{kb_str}
+如果问题需要查询特定领域知识，请使用 `rag_search` 工具并指定 `kb_name`。
+在 final 结论中，若基于 rag_search 的结果回答，请在相关内容后**附带来源引用**（如：`[来源: source_file]`），提高回答可信度。
 
 【Skill 使用规则（按需加载）】
 当且仅当用户任务与某个 Skill 高度相关时，才按需读取对应的 SKILL.md 正文。

@@ -176,6 +176,14 @@ def rag_remove_cmd(name: str | None) -> None:
     dispatch("rag.remove", name=name)
 
 
+@rag_group.command("search", help="在知识库中检索")
+@click.argument("kb_name", required=True)
+@click.argument("query", required=True)
+@click.option("--top-k", type=int, default=5, help="返回结果数量")
+def rag_search_cmd(kb_name: str, query: str, top_k: int) -> None:
+    dispatch("rag.search", kb_name=kb_name, query=query, top_k=top_k)
+
+
 @rag_group.group("api", help="管理 RAG 远程 Embedding 配置")
 def rag_api_group() -> None:
     pass

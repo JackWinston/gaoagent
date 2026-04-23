@@ -83,6 +83,32 @@ def build_function_specs(
                 "additionalProperties": False,
             },
         },
+        "rag_search": {
+            "description": (
+                "在指定的 RAG 知识库中进行向量检索，获取与问题最相关的文档切片。"
+                "当用户询问特定领域的知识或项目代码时，使用此工具获取上下文。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "kb_name": {
+                        "type": "string",
+                        "description": "知识库名称（如果不确定，可先不传或询问用户，或者默认使用最相关的）"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "检索的查询语句，通常是用户的原问题或提取的关键词"
+                    },
+                    "top_k": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "返回的最相关文档切片数量"
+                    }
+                },
+                "required": ["kb_name", "query"],
+                "additionalProperties": False,
+            },
+        },
     }
     specs: list[dict[str, Any]] = []
     for name in tool_names:

@@ -101,12 +101,6 @@ class RagChromaIndexer:
         if not chunks:
             return (False, "可入库文件内容为空")
 
-        # 临时调试开关：仅向量化前 200 条切片，便于快速排查问题。
-        debug_limit = 200
-        if len(chunks) > debug_limit:
-            print(f"[RAG] 调试模式：切片总数={len(chunks)}，仅处理前 {debug_limit} 条")
-            chunks = chunks[:debug_limit]
-
         try:
             # 延迟导入，避免在未安装依赖时影响其他命令启动。
             from chromadb import PersistentClient

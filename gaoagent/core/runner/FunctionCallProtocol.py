@@ -94,6 +94,49 @@ def build_function_specs(
                 "additionalProperties": False,
             },
         },
+        "search_workspace": {
+            "description": (
+                "在当前项目内执行全文检索（基于 ripgrep），并遵循 .gitignore 过滤规则。"
+                "该工具不会搜索项目目录之外的文件。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "检索关键词或正则表达式（默认按 regex 语义）"
+                    },
+                    "scope_path": {
+                        "type": "string",
+                        "description": "可选；在该目录或文件范围搜索（绝对路径，且必须位于当前项目内）"
+                    },
+                    "file_glob": {
+                        "description": "可选文件过滤；支持字符串或字符串数组（例如 *.py 或 [\"*.py\", \"*.md\"]）",
+                        "oneOf": [
+                            {"type": "string"},
+                            {"type": "array", "items": {"type": "string"}}
+                        ]
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "最多返回的命中数（上限 500）"
+                    },
+                    "case_sensitive": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "是否大小写敏感；false 时使用 smart-case"
+                    },
+                    "literal": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "是否按字面量搜索（不使用正则）"
+                    }
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        },
         "rag_search": {
             "description": (
                 "在指定的 RAG 知识库中进行向量检索，获取与问题最相关的文档切片。"

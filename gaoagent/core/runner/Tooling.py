@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
 import subprocess
 from typing import Any, Callable
 
 import click
 
-from gaoagent.core.runner.Utils import safe_json_dumps
+from gaoagent.core.runner.Utils import safe_json_dumps, try_project_root_dir
 
 
 @dataclass(frozen=True)
@@ -501,10 +502,276 @@ def default_tool_registry() -> ToolRegistry:
         except Exception as e:
             return {"success": False, "error": f"检索异常：{str(e)}"}
 
+    def _search_workspace(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+        """在当前项目范围内执行全文检索（基于 ripgrep）。"""
+        query = args.get("query")
+        scope_path = args.get("scope_path")
+        file_glob = args.get("file_glob")
+        max_results = args.get("max_results", 50)
+        case_sensitive = args.get("case_sensitive", False)
+        literal = args.get("literal", False)
+
+        if not isinstance(query, str) or not query.strip():
+            return {
+                "success": False,
+                "error": {"type": "ValueError", "message": "query must be non-empty str"},
+            }
+        if not isinstance(max_results, int):
+            return {
+                "success": False,
+                "error": {"type": "ValueError", "message": "max_results must be int"},
+            }
+        if max_results <= 0:
+            return {
+                "success": False,
+                "error": {"type": "ValueError", "message": "max_results must be > 0"},
+            }
+        if max_results > 500:
+            max_results = 500
+        if not isinstance(case_sensitive, bool):
+            return {
+                "success": False,
+                "error": {"type": "ValueError", "message": "case_sensitive must be bool"},
+            }
+        if not isinstance(literal, bool):
+            return {
+                "success": False,
+                "error": {"type": "ValueError", "message": "literal must be bool"},
+            }
+
+        globs: list[str] = []
+        if isinstance(file_glob, str) and file_glob.strip():
+            globs.append(file_glob.strip())
+        elif isinstance(file_glob, list):
+            for item in file_glob:
+                if isinstance(item, str) and item.strip():
+                    globs.append(item.strip())
+                else:
+                    return {
+                        "success": False,
+                        "error": {
+                            "type": "ValueError",
+                            "message": "file_glob list items must be non-empty str",
+                        },
+                    }
+        elif file_glob is not None:
+            return {
+                "success": False,
+                "error": {"type": "ValueError", "message": "file_glob must be str or list[str]"},
+            }
+
+        project_root = try_project_root_dir() or Path.cwd().resolve()
+        if not project_root.exists() or not project_root.is_dir():
+            return {
+                "success": False,
+                "error": {"type": "NotADirectoryError", "message": "project root is invalid"},
+                "project_root": str(project_root),
+            }
+
+        search_root = project_root
+        search_target = "."
+        scope_type = "project"
+        normalized_scope_path = ""
+        if scope_path is not None:
+            if not isinstance(scope_path, str):
+                return {
+                    "success": False,
+                    "error": {"type": "ValueError", "message": "scope_path must be str"},
+                }
+            normalized_scope_path = scope_path.strip().replace("\\", "/")
+            if normalized_scope_path:
+                candidate = Path(normalized_scope_path)
+                if not candidate.is_absolute():
+                    return {
+                        "success": False,
+                        "error": {
+                            "type": "ValueError",
+                            "message": "scope_path must be an absolute path",
+                        },
+                        "project_root": str(project_root),
+                    }
+                search_root = candidate.resolve()
+                if search_root != project_root and project_root not in search_root.parents:
+                    return {
+                        "success": False,
+                        "error": {
+                            "type": "PermissionError",
+                            "message": "scope_path must stay inside project root",
+                        },
+                        "project_root": str(project_root),
+                    }
+                if not search_root.exists():
+                    return {
+                        "success": False,
+                        "error": {"type": "FileNotFoundError", "message": "scope_path not found"},
+                        "project_root": str(project_root),
+                        "scope_path": normalized_scope_path,
+                    }
+                if search_root.is_dir():
+                    search_target = "."
+                    scope_type = "directory"
+                elif search_root.is_file():
+                    search_target = search_root.name
+                    search_root = search_root.parent
+                    scope_type = "file"
+                else:
+                    return {
+                        "success": False,
+                        "error": {
+                            "type": "ValueError",
+                            "message": "scope_path must point to a file or directory",
+                        },
+                        "project_root": str(project_root),
+                        "scope_path": normalized_scope_path,
+                    }
+
+        cmd: list[str] = [
+            "rg",
+            "--json",
+            "--line-number",
+            "--column",
+            "--with-filename",
+            "--no-heading",
+            "--glob",
+            "!.git/*",
+        ]
+        if case_sensitive:
+            cmd.append("--case-sensitive")
+        else:
+            cmd.append("--smart-case")
+        if literal:
+            cmd.append("--fixed-strings")
+        for pattern in globs:
+            cmd.extend(["--glob", pattern])
+        cmd.extend([query.strip(), search_target])
+
+        try:
+            process = subprocess.Popen(
+                cmd,
+                cwd=str(search_root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except FileNotFoundError:
+            return {
+                "success": False,
+                "error": {"type": "FileNotFoundError", "message": "ripgrep (rg) not found"},
+                "project_root": str(project_root),
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": {"type": type(e).__name__, "message": str(e)},
+                "project_root": str(project_root),
+            }
+
+        results: list[dict[str, Any]] = []
+        stopped_early = False
+        try:
+            assert process.stdout is not None
+            for line in process.stdout:
+                raw = line.strip()
+                if not raw:
+                    continue
+                try:
+                    event = json.loads(raw)
+                except Exception:
+                    continue
+                if event.get("type") != "match":
+                    continue
+                data = event.get("data") if isinstance(event.get("data"), dict) else {}
+                line_no = data.get("line_number")
+                line_text = (
+                    data.get("lines", {}).get("text")
+                    if isinstance(data.get("lines"), dict)
+                    else ""
+                )
+                submatches = data.get("submatches") if isinstance(data.get("submatches"), list) else []
+                path_text = (
+                    data.get("path", {}).get("text")
+                    if isinstance(data.get("path"), dict)
+                    else None
+                )
+                if not isinstance(path_text, str) or not path_text:
+                    continue
+
+                abs_path = (search_root / path_text).resolve()
+                if abs_path != project_root and project_root not in abs_path.parents:
+                    continue
+
+                if submatches:
+                    for sm in submatches:
+                        if not isinstance(sm, dict):
+                            continue
+                        results.append(
+                            {
+                                "path": str(abs_path),
+                                "line": int(line_no) if isinstance(line_no, int) else None,
+                                "start": sm.get("start"),
+                                "end": sm.get("end"),
+                                "line_text": line_text,
+                            }
+                        )
+                        if len(results) >= max_results:
+                            stopped_early = True
+                            break
+                else:
+                    results.append(
+                        {
+                            "path": str(abs_path),
+                            "line": int(line_no) if isinstance(line_no, int) else None,
+                            "start": None,
+                            "end": None,
+                            "line_text": line_text,
+                        }
+                    )
+                if len(results) >= max_results:
+                    stopped_early = True
+                    break
+        finally:
+            if stopped_early:
+                process.terminate()
+            try:
+                stdout_text, stderr_text = process.communicate(timeout=1)
+            except Exception:
+                process.kill()
+                stdout_text, stderr_text = process.communicate()
+
+        exit_code = int(process.returncode) if process.returncode is not None else -1
+        # rg 约定：0=有匹配，1=无匹配，2=执行错误
+        if not stopped_early and exit_code not in (0, 1):
+            return {
+                "success": False,
+                "error": {
+                    "type": "RuntimeError",
+                    "message": (stderr_text or stdout_text or "rg failed").strip(),
+                },
+                "project_root": str(project_root),
+                "exit_code": exit_code,
+            }
+
+        return {
+            "success": True,
+            "project_root": str(project_root),
+            "search_root": str(search_root),
+            "scope_path": normalized_scope_path,
+            "scope_type": scope_type,
+            "search_target": search_target,
+            "query": query.strip(),
+            "used_gitignore": True,
+            "max_results": max_results,
+            "count": len(results),
+            "results": results,
+        }
+
     tools.register("list_dir", _list_dir)
     tools.register("read_file", _read_file)
     tools.register("ask_user", _ask_user)
     tools.register("write_file", _write_file)
     tools.register("run_command", _run_command)
+    tools.register("search_workspace", _search_workspace)
     tools.register("rag_search", _rag_search)
     return tools

@@ -345,6 +345,7 @@ class CoreConfigDefault:
         if not copied:
             click.echo("已取消创建知识库（未执行入库）")
             return False
+        self._prompt_import_rag_api_after_copy(kb_name=selected_name)
 
         (ok, reason) = self._build_rag_vector_store(
             kb_name=selected_name,
@@ -433,6 +434,7 @@ class CoreConfigDefault:
         """
         config_store = RagApiConfigStore()
         indexer_config: RagChromaIndexerConfig = config_store.resolve_indexer_config(
+            kb_name=kb_name,
             local_embedding_model="all-MiniLM-L6-v2",
             chunk_size=1200,
             chunk_overlap=200,
@@ -443,6 +445,49 @@ class CoreConfigDefault:
             indexer_config.chunker_py_file = custom_chunker
         indexer = RagChromaIndexer(indexer_config)
         return indexer.ingest_knowledge_base(kb_name=kb_name, kb_dir=kb_dir)
+
+    def _prompt_import_rag_api_after_copy(self, *, kb_name: str) -> None:
+        if not click.confirm("是否现在导入 RAG 远程 Embedding API 配置？", default=False):
+            return
+        store = RagApiConfigStore()
+        try:
+            config_file = store.config_file()
+        except Exception as e:
+            click.echo(f"导入 RAG API 配置失败：{e}")
+            return
+
+        payload = store.load()
+        kb_remote_apis = payload.get("kb_remote_apis")
+        if not isinstance(kb_remote_apis, dict):
+            kb_remote_apis = {}
+        if kb_name in kb_remote_apis:
+            should_overwrite = click.confirm(
+                f"知识库 '{kb_name}' 已存在远程配置，是否覆盖？",
+                default=False,
+            )
+            if not should_overwrite:
+                click.echo(f"已跳过导入：{kb_name}")
+                return
+
+        base_url = self._prompt_non_empty_str("请输入远程 Base URL（OpenAI 兼容）").rstrip("/")
+        api_key = self._prompt_non_empty_str("请输入远程 API Key", hide_input=True)
+        embedding_model = self._prompt_non_empty_str("请输入远程 Embedding Model")
+        timeout_sec = self._prompt_positive_int("请输入请求超时秒数", default=120, show_default=True)
+        kb_remote_apis[kb_name] = {
+            "base_url": base_url,
+            "api_key": api_key,
+            "embedding_model": embedding_model,
+            "timeout_sec": timeout_sec,
+        }
+        payload["kb_remote_apis"] = kb_remote_apis
+
+        try:
+            store.save(payload)
+        except Exception as e:
+            click.echo(f"导入 RAG API 配置失败：{e}")
+            return
+        click.echo(f"已导入知识库远程配置：{kb_name}")
+        click.echo(f"配置文件：{config_file}")
         
     def _load_skills_metadata(self, skills_dir: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
         return scan_skills_metadata(skills_dir)

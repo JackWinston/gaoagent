@@ -184,56 +184,5 @@ def rag_search_cmd(kb_name: str, query: str, top_k: int) -> None:
     dispatch("rag.search", kb_name=kb_name, query=query, top_k=top_k)
 
 
-@rag_group.group("api", help="管理 RAG 远程 Embedding 配置")
-def rag_api_group() -> None:
-    pass
-
-
-@rag_api_group.command("list", help="列出远程配置")
-def rag_api_list_cmd() -> None:
-    dispatch("rag.api.list")
-
-
-@rag_api_group.command("add", help="新增远程配置")
-def rag_api_add_cmd() -> None:
-    dispatch("rag.api.add")
-
-
-@rag_api_group.command("edit", help="编辑远程配置")
-def rag_api_edit_cmd() -> None:
-    dispatch("rag.api.edit")
-
-
-@rag_api_group.command("remove", help="移除远程配置")
-@click.argument("name", required=False)
-def rag_api_remove_cmd(name: str | None) -> None:
-    dispatch("rag.api.remove", name=name)
-
-
-@cli.group("api", help="OpenAI API 相关命令")
-def api_group() -> None:
-    pass
-
-
-@api_group.command("list", help="列出 API 配置")
-def api_list_cmd() -> None:
-    dispatch("api.list")
-
-
-@api_group.command("add", help="添加 API 配置")
-def api_add_cmd() -> None:
-    dispatch("api.add")
-
-
-@api_group.command("edit", help="编辑 API 配置")
-def api_edit_cmd() -> None:
-    dispatch("api.edit")
-
-
-@api_group.command("remove", help="移除 API 配置")
-def api_remove_cmd() -> None:
-    dispatch("api.remove")
-
-
 def main() -> None:
     cli(prog_name="gaoagent")

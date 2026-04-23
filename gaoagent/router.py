@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Callable
 
 from gaoagent.core.CoreHandlers import CoreHandlers
-from gaoagent.api.ApiHandlers import ApiHandlers
 from gaoagent.rag.RagHandlers import RagHandlers
 from gaoagent.skills.SkillsHandlers import SkillsHandlers
 from gaoagent.mcp.MCPHandlers import MCPHandlers
@@ -41,15 +40,6 @@ ROUTES: dict[str, Route] = {
     "rag.add": Route(factory=RagHandlers, method_name="add"),
     "rag.remove": Route(factory=RagHandlers, method_name="remove"),
     "rag.search": Route(factory=RagHandlers, method_name="search"),
-    "rag.api.list": Route(factory=RagHandlers, method_name="api_list"),
-    "rag.api.add": Route(factory=RagHandlers, method_name="api_add"),
-    "rag.api.edit": Route(factory=RagHandlers, method_name="api_edit"),
-    "rag.api.remove": Route(factory=RagHandlers, method_name="api_remove"),
-    
-    "api.list": Route(factory=ApiHandlers, method_name="list"),
-    "api.add": Route(factory=ApiHandlers, method_name="add"),
-    "api.edit": Route(factory=ApiHandlers, method_name="edit"),
-    "api.remove": Route(factory=ApiHandlers, method_name="remove"),
 }
 
 

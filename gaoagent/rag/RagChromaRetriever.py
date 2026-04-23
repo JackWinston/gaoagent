@@ -24,7 +24,7 @@ class RagChromaRetriever:
         self.store_dir = resolve_chroma_store_dir(kb_dir=self.kb_dir, kb_name=kb_name)
         self.meta_file = resolve_index_meta_file(kb_dir=self.kb_dir, kb_name=kb_name)
 
-    def search(self, query: str, top_k: int = 5, score_threshold: float = 0.0) -> dict[str, Any]:
+    def search(self, query: str, top_k: int = 3, score_threshold: float = 0.0) -> dict[str, Any]:
         """
         执行相似度检索。
         
@@ -61,6 +61,7 @@ class RagChromaRetriever:
                 collection = client.get_collection(name=collection_name)
                 config_store = RagApiConfigStore()
                 cfg = config_store.resolve_indexer_config(
+                    kb_name=self.kb_name,
                     local_embedding_model=embedding_model,
                     chunk_size=1000, chunk_overlap=0, batch_size=1
                 )

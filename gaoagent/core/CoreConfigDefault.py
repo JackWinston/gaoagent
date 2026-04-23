@@ -4,6 +4,7 @@ from typing import Any
 import datetime
 import json
 import shutil
+import time
 import click
 
 from gaoagent.mcp.MCPClientCompat import (
@@ -392,10 +393,24 @@ class CoreConfigDefault:
         for p in targets:
             if not p.exists():
                 continue
-            if p.is_dir():
-                shutil.rmtree(p)
-            else:
-                p.unlink(missing_ok=True)
+            last_err: Exception | None = None
+            for _ in range(6):
+                try:
+                    if p.is_dir():
+                        shutil.rmtree(p)
+                    else:
+                        p.unlink(missing_ok=True)
+                    last_err = None
+                    break
+                except PermissionError as e:
+                    # Windows 上 sqlite 文件可能被短暂占用，稍后重试。
+                    last_err = e
+                    time.sleep(0.3)
+                except Exception as e:
+                    last_err = e
+                    break
+            if last_err is not None:
+                click.echo(f"清理索引产物失败（将跳过该项）：{p}，{last_err}")
 
     def _build_rag_vector_store(
         self,

@@ -32,7 +32,7 @@ class RagChromaIndexerConfig:
     remote_base_url: str = ""
     remote_api_key: str = ""
     remote_embedding_model: str = ""
-    remote_timeout_sec: int = 60
+    remote_timeout_sec: int = 120
     chunker_py_file: str = ""
 
 

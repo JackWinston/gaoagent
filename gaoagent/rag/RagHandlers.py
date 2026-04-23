@@ -273,7 +273,7 @@ class RagHandlers:
         timeout_default = (
             int(existing.get("timeout_sec"))
             if isinstance(existing, dict) and isinstance(existing.get("timeout_sec"), int)
-            else 60
+            else 120
         )
 
         base_url = self._prompt_non_empty_str("请输入远程 Base URL（OpenAI 兼容）", default=base_default)

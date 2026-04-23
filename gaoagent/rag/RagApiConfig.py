@@ -86,7 +86,7 @@ class RagApiConfigStore:
         api_key = str(remote_body.get("api_key") or "").strip()
         model = str(remote_body.get("embedding_model") or "").strip()
         timeout_raw = remote_body.get("timeout_sec")
-        timeout = int(timeout_raw) if isinstance(timeout_raw, int) and timeout_raw > 0 else 60
+        timeout = int(timeout_raw) if isinstance(timeout_raw, int) and timeout_raw > 0 else 120
 
         if not (base_url and api_key and model):
             # 远程配置缺字段时自动回退本地，避免影响主流程。

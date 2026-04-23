@@ -30,7 +30,9 @@ class RagChromaRetriever:
 
     def search(self, query: str, top_k: int = 3, score_threshold: float = 0.0) -> dict[str, Any]:
         """
-        执行相似度检索。
+        执行相似度检索(向量检索)。
+        实际上,商用工程中,会根据业务场景,选择不同的检索模式,或者多种检索模式的组合。
+        比如说, 向量检索 + 关键字检索 +  RRF 融合算法
         
         参数:
         - query: 用户的提问或检索词。

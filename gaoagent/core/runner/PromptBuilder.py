@@ -36,12 +36,42 @@ def build_react_system_text( *, tool_names: list[str] | None) -> str:
     - str: 系统提示词.
     """
     available_tools = tool_names or []
-    tool_line = " | ".join(available_tools) if available_tools else "无可用工具"
 
     from gaoagent.core.runner.Utils import load_rag
     rag_info = load_rag()
     kb_list = rag_info.get("indexes", [])
-    kb_str = ", ".join(kb_list) if kb_list else "无"
+    kb_str = ", ".join(kb_list)
+    rag_section = (
+        f"""
+【RAG 检索与引用规则】
+当前可用 RAG 知识库：{kb_str}
+如果问题需要查询特定领域知识，请使用 `rag_search` 工具并指定 `kb_name`。
+在 final 结论中，若基于 rag_search 的结果回答，请在相关内容后**附带来源引用**（如：`[来源: source_file]`），提高回答可信度。
+"""
+        if kb_list
+        else ""
+    )
+
+    skill_str = _getSkillStr().strip()
+    skill_section = (
+        f"""
+【Skill 使用规则】
+当且仅当用户任务与某个 Skill 高度相关时，才按需读取对应的 SKILL.md 正文。
+以下是 Skill 索引：
+{skill_str}
+"""
+        if skill_str
+        else ""
+    )
+
+    tools_section = (
+        f"""
+【可用工具】
+{" | ".join(available_tools)}
+"""
+        if available_tools
+        else ""
+    )
 
     base_prompt = f"""
 
@@ -72,19 +102,11 @@ def build_react_system_text( *, tool_names: list[str] | None) -> str:
 4. 无可用工具或工具无法获取有效信息：在 thought 中说明依据与限制，再输出 final。
 5. 仅在任务完成时输出 final；final 需直接回答用户问题，简洁完整。
 
-【RAG 检索与引用规则】
-当前可用 RAG 知识库：{kb_str}
-如果问题需要查询特定领域知识，请使用 `rag_search` 工具并指定 `kb_name`。
-在 final 结论中，若基于 rag_search 的结果回答，请在相关内容后**附带来源引用**（如：`[来源: source_file]`），提高回答可信度。
+{rag_section}
 
-【Skill 使用规则（按需加载）】
-当且仅当用户任务与某个 Skill 高度相关时，才按需读取对应的 SKILL.md 正文。
-以下是 Skill 索引：
-{_getSkillStr()}
+{skill_section}
 
-
-【可用工具】
-{tool_line}
+{tools_section}
 
 【系统信息】
 OS : {os.name}

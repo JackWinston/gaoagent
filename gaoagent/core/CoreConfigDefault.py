@@ -345,7 +345,7 @@ class CoreConfigDefault:
         if not copied:
             click.echo("已取消创建知识库（未执行入库）")
             return False
-        self._prompt_import_rag_api_after_copy(kb_name=selected_name)
+        self._prompt_import_rag_api_after_copy(kb_name=selected_name, rag_dir=rag_dir)
 
         (ok, reason) = self._build_rag_vector_store(
             kb_name=selected_name,
@@ -432,9 +432,8 @@ class CoreConfigDefault:
         - bool: 是否成功；
         - str: 失败原因（成功时可为空字符串）。
         """
-        config_store = RagApiConfigStore()
+        config_store = RagApiConfigStore(kb_name=kb_name, kb_dir=kb_dir)
         indexer_config: RagChromaIndexerConfig = config_store.resolve_indexer_config(
-            kb_name=kb_name,
             local_embedding_model="all-MiniLM-L6-v2",
             chunk_size=1200,
             chunk_overlap=200,
@@ -446,10 +445,11 @@ class CoreConfigDefault:
         indexer = RagChromaIndexer(indexer_config)
         return indexer.ingest_knowledge_base(kb_name=kb_name, kb_dir=kb_dir)
 
-    def _prompt_import_rag_api_after_copy(self, *, kb_name: str) -> None:
+    def _prompt_import_rag_api_after_copy(self, *, kb_name: str, rag_dir: Path) -> None:
         if not click.confirm("是否现在导入 RAG 远程 Embedding API 配置？", default=False):
             return
-        store = RagApiConfigStore()
+        kb_dir = rag_dir / kb_name
+        store = RagApiConfigStore(kb_name=kb_name, kb_dir=kb_dir)
         try:
             config_file = store.config_file()
         except Exception as e:
@@ -457,10 +457,8 @@ class CoreConfigDefault:
             return
 
         payload = store.load()
-        kb_remote_apis = payload.get("kb_remote_apis")
-        if not isinstance(kb_remote_apis, dict):
-            kb_remote_apis = {}
-        if kb_name in kb_remote_apis:
+        remote_api = payload.get("remote_api")
+        if isinstance(remote_api, dict) and remote_api:
             should_overwrite = click.confirm(
                 f"知识库 '{kb_name}' 已存在远程配置，是否覆盖？",
                 default=False,
@@ -473,13 +471,12 @@ class CoreConfigDefault:
         api_key = self._prompt_non_empty_str("请输入远程 API Key", hide_input=True)
         embedding_model = self._prompt_non_empty_str("请输入远程 Embedding Model")
         timeout_sec = self._prompt_positive_int("请输入请求超时秒数", default=120, show_default=True)
-        kb_remote_apis[kb_name] = {
+        payload["remote_api"] = {
             "base_url": base_url,
             "api_key": api_key,
             "embedding_model": embedding_model,
             "timeout_sec": timeout_sec,
         }
-        payload["kb_remote_apis"] = kb_remote_apis
 
         try:
             store.save(payload)

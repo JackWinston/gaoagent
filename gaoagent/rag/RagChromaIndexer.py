@@ -7,6 +7,7 @@ from typing import Any
 import json
 import re
 import time
+import gc
 import urllib.request
 import urllib.error
 
@@ -105,7 +106,6 @@ class RagChromaIndexer:
         try:
             # 延迟导入，避免在未安装依赖时影响其他命令启动。
             from chromadb import PersistentClient
-            from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
         except Exception as e:
             return (False, f"导入 chromadb 失败：{e}")
 
@@ -114,6 +114,7 @@ class RagChromaIndexer:
         store_dir.mkdir(parents=True, exist_ok=True)
         collection_name = self._sanitize_collection_name(kb_name)
 
+        client: Any | None = None
         try:
             client = PersistentClient(path=str(store_dir))
 
@@ -130,6 +131,10 @@ class RagChromaIndexer:
                 )
             else:
                 # 本地 embedding 模式：由 Chroma 的 embedding_function 自动生成向量。
+                try:
+                    from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+                except Exception as e:
+                    return (False, f"导入本地 embedding 依赖失败：{e}")
                 embedding_fn = SentenceTransformerEmbeddingFunction(model_name=self._config.embedding_model)
                 collection = client.get_or_create_collection(
                     name=collection_name,
@@ -169,6 +174,9 @@ class RagChromaIndexer:
                 print(f"[RAG] 写入进度：done={done}/{total_chunks} ({progress:.2f}%)")
             final_chunk_count = int(collection.count())
         except Exception as e:
+            # 尽快释放底层 sqlite 句柄，降低 Windows 清理索引目录时的占用概率。
+            client = None
+            gc.collect()
             return (False, f"写入向量库失败：{e}")
 
         self._write_index_meta(

@@ -59,9 +59,8 @@ class RagChromaRetriever:
 
             if embedding_mode == "remote":
                 collection = client.get_collection(name=collection_name)
-                config_store = RagApiConfigStore()
+                config_store = RagApiConfigStore(kb_name=self.kb_name, kb_dir=self.kb_dir)
                 cfg = config_store.resolve_indexer_config(
-                    kb_name=self.kb_name,
                     local_embedding_model=embedding_model,
                     chunk_size=1000, chunk_overlap=0, batch_size=1
                 )

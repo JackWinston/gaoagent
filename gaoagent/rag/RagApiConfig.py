@@ -5,18 +5,22 @@ from pathlib import Path
 from typing import Any
 
 from gaoagent.rag.RagChromaIndexer import RagChromaIndexerConfig
-from gaoagent.core.runner.Utils import _find_config_file
+from gaoagent.rag.RagStorePath import resolve_chroma_store_dir
 
 
 class RagApiConfigStore:
     _FILENAME = "gao_client_rag_api_config.json"
 
+    def __init__(self, *, kb_name: str, kb_dir: Path) -> None:
+        self._kb_name = kb_name
+        self._kb_dir = kb_dir.resolve()
+
     def config_file(self) -> Path:
-        rag_dir = _find_config_file("rag").resolve()
-        return rag_dir / ".chrome_store" / self._FILENAME
+        store_dir = resolve_chroma_store_dir(kb_dir=self._kb_dir, kb_name=self._kb_name)
+        return store_dir / self._FILENAME
 
     def _default_payload(self) -> dict[str, Any]:
-        return {"kb_remote_apis": {}, "chunker_py_file": ""}
+        return {"remote_api": {}, "chunker_py_file": ""}
 
     def load(self) -> dict[str, Any]:
         try:
@@ -31,13 +35,13 @@ class RagApiConfigStore:
             return self._default_payload()
         if not isinstance(payload, dict):
             return self._default_payload()
-        kb_remote_apis = payload.get("kb_remote_apis")
-        if not isinstance(kb_remote_apis, dict):
-            kb_remote_apis = {}
+        remote_api = payload.get("remote_api")
+        if not isinstance(remote_api, dict):
+            remote_api = {}
         chunker_py_file = payload.get("chunker_py_file")
         if not isinstance(chunker_py_file, str):
             chunker_py_file = ""
-        return {"kb_remote_apis": kb_remote_apis, "chunker_py_file": chunker_py_file}
+        return {"remote_api": remote_api, "chunker_py_file": chunker_py_file}
 
     def save(self, payload: dict[str, Any]) -> None:
         path = self.config_file()
@@ -52,21 +56,15 @@ class RagApiConfigStore:
     def resolve_indexer_config(
         self,
         *,
-        kb_name: str,
         local_embedding_model: str,
         chunk_size: int,
         chunk_overlap: int,
         batch_size: int,
     ) -> RagChromaIndexerConfig:
         payload = self.load()
-        kb_remote_apis = payload.get("kb_remote_apis")
+        remote_api = payload.get("remote_api")
         chunker_py_file = str(payload.get("chunker_py_file") or "").strip()
-        remote_body: dict[str, Any] | None = None
-
-        if isinstance(kb_remote_apis, dict):
-            body = kb_remote_apis.get(kb_name)
-            if isinstance(body, dict):
-                remote_body = body
+        remote_body = remote_api if isinstance(remote_api, dict) else None
 
         if remote_body is None:
             return RagChromaIndexerConfig(

@@ -545,11 +545,11 @@ class RagChromaIndexer:
                 if probe_ids:
                     payload = collection.get(
                         ids=[str(probe_ids[0])],
-                        include=["documents", "metadatas", "embeddings"],
+                        include=["documents", "metadatas"],
                     )
                 else:
                     payload = collection.get(
-                        include=["documents", "metadatas", "embeddings"],
+                        include=["documents", "metadatas"],
                         limit=1,
                         offset=0,
                     )
@@ -557,17 +557,25 @@ class RagChromaIndexer:
                 if not isinstance(ids, list) or len(ids) < 1:
                     return (False, "读取探测失败：collection.get 未返回有效 ids")
 
-                # 通过 query_embeddings 走一次向量检索路径，触发 HNSW reader 初始化。
-                raw_embeddings = payload.get("embeddings")
-                if not isinstance(raw_embeddings, list) or len(raw_embeddings) < 1:
-                    return (False, "读取探测失败：collection.get 未返回有效 embeddings")
-                probe_embedding = raw_embeddings[0]
-                if not isinstance(probe_embedding, list) or len(probe_embedding) < 1:
-                    return (False, "读取探测失败：probe embedding 格式无效")
-                collection.query(
-                    query_embeddings=[probe_embedding],
-                    n_results=1,
-                )
+                docs = payload.get("documents")
+                if not isinstance(docs, list) or len(docs) < 1:
+                    return (False, "读取探测失败：collection.get 未返回有效 documents")
+                probe_doc = str(docs[0]).strip()
+                if not probe_doc:
+                    return (False, "读取探测失败：probe document 为空")
+
+                # 走一次 query 路径，触发 HNSW reader 初始化。
+                if self._use_remote_embedding():
+                    probe_embedding = self._embed_remote([probe_doc])[0]
+                    collection.query(
+                        query_embeddings=[probe_embedding],
+                        n_results=1,
+                    )
+                else:
+                    collection.query(
+                        query_texts=[probe_doc],
+                        n_results=1,
+                    )
             return (True, "")
         except Exception as e:
             return (False, str(e))

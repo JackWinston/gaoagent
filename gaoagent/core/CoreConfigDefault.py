@@ -1,9 +1,10 @@
 from pathlib import Path
 from typing import Any
 
-import click
-import json
 import datetime
+import json
+import shutil
+import click
 
 from gaoagent.mcp.MCPClientCompat import (
     MCPStdioClientSync,
@@ -11,6 +12,8 @@ from gaoagent.mcp.MCPClientCompat import (
     write_mcp_tools_cache,
 )
 from gaoagent.core.runner.Utils import scan_skills_metadata
+from gaoagent.rag.RagApiConfig import RagApiConfigStore
+from gaoagent.rag.RagChromaIndexer import RagChromaIndexer, RagChromaIndexerConfig
 
 
 class CoreConfigDefault:
@@ -288,11 +291,127 @@ class CoreConfigDefault:
         引导用户输入 RAG 相关配置。
         """
         if click.confirm("是否跳过 RAG 配置？", default=False):
-            return False        
-        rag_dir = Path.home() / ".gaoagent" / "rag"
+            return False
+        return self.create_rag_knowledge_base()
+
+    def create_rag_knowledge_base(
+        self,
+        *,
+        rag_root_dir: Path | None = None,
+        kb_name: str | None = None,
+        chunker_py_file: str | None = None,
+    ) -> bool:
+        """
+        交互式创建一个知识库目录（可复用）。
+
+        流程：
+        1. 询问并获取知识库名称；
+        2. 在 `~/.gaoagent/rag/<知识库名>` 创建目录；
+        3. 提示用户复制文件到该目录；
+        4. Embedding 与向量库写入暂不实现；
+        5. 输出创建成功信息。
+        """
+        rag_dir = rag_root_dir if rag_root_dir is not None else (self._ensure_config_dir() / "rag")
         rag_dir.mkdir(parents=True, exist_ok=True)
-        # TODO: 比较复杂,暂时不实现
-        return False
+
+        if kb_name is None and (not click.confirm("是否创建知识库？", default=True)):
+            return False
+
+        selected_name = (kb_name or "").strip()
+        created_new_dir = False
+        while True:
+            if not selected_name:
+                selected_name = self._prompt_non_empty_str("请输入知识库名称")
+            kb_dir = rag_dir / selected_name
+            if kb_dir.exists():
+                if not kb_dir.is_dir():
+                    click.echo(f"同名路径已存在且不是目录，请更换名称：{kb_dir}")
+                    if kb_name is not None:
+                        return False
+                    selected_name = ""
+                    continue
+                backup_count = self._backup_existing_rag_artifacts(kb_dir)
+                if backup_count > 0:
+                    click.echo(f"检测到已有数据库/索引，已完成备份（{backup_count} 项）：{kb_dir}")
+                else:
+                    click.echo(f"知识库目录已存在，将直接复用：{kb_dir}")
+                break
+            kb_dir.mkdir(parents=True, exist_ok=False)
+            created_new_dir = True
+            break
+
+        click.echo(f"请将需要入库的文件复制到目录：{kb_dir}")
+        click.confirm("是否已经完成文件复制？", default=False)
+
+        (ok, reason) = self._build_rag_vector_store(
+            kb_name=selected_name,
+            kb_dir=kb_dir,
+            chunker_py_file=chunker_py_file,
+        )
+        if not ok:
+            if created_new_dir and kb_dir.exists() and kb_dir.is_dir():
+                shutil.rmtree(kb_dir)
+            if reason:
+                click.echo(f"知识库创建失败：{reason}")
+            else:
+                click.echo("知识库创建失败")
+            return False
+
+        click.echo(f"知识库创建成功：{selected_name}")
+        return True
+
+    def _backup_existing_rag_artifacts(self, kb_dir: Path) -> int:
+        """
+        备份已有知识库目录中的向量库与索引文件。
+
+        仅备份：
+        - chroma_db/
+        - index_meta.json
+        """
+        targets = [kb_dir / "chroma_db", kb_dir / "index_meta.json"]
+        existing = [p for p in targets if p.exists()]
+        if not existing:
+            return 0
+
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_root = kb_dir / "_backup" / ts
+        backup_root.mkdir(parents=True, exist_ok=False)
+        count = 0
+        for src in existing:
+            dst = backup_root / src.name
+            if src.is_dir():
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+            count += 1
+        return count
+
+    def _build_rag_vector_store(
+        self,
+        *,
+        kb_name: str,
+        kb_dir: Path,
+        chunker_py_file: str | None = None,
+    ) -> tuple[bool, str]:
+        """
+        构建知识库 Embedding 并写入向量库。
+
+        返回：
+        - bool: 是否成功；
+        - str: 失败原因（成功时可为空字符串）。
+        """
+        config_store = RagApiConfigStore()
+        indexer_config: RagChromaIndexerConfig = config_store.resolve_indexer_config(
+            local_embedding_model="all-MiniLM-L6-v2",
+            chunk_size=1200,
+            chunk_overlap=200,
+            batch_size=64,
+        )
+        custom_chunker = (chunker_py_file or "").strip()
+        if custom_chunker:
+            indexer_config.chunker_py_file = custom_chunker
+        indexer = RagChromaIndexer(indexer_config)
+        return indexer.ingest_knowledge_base(kb_name=kb_name, kb_dir=kb_dir)
         
     def _load_skills_metadata(self, skills_dir: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
         return scan_skills_metadata(skills_dir)

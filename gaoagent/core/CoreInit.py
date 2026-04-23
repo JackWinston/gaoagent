@@ -24,7 +24,7 @@ class CoreInit:
         4,询问用户选择默认的api和模型(). 如果用户没有选择,则默认选择第一个api.写入.gaoagent目录 gao_client_api_config.json 配置文件.
         5,展示已经加载的mcp服务,并提示用户选择mcp服务.用户可跳过.将选择好的mcp服务写入.gaoagent目录 gao_client_mcp_setting.json 配置文件.
         6,展示已经加载的Skill,并提示用户选择Skill.用户可跳过.将选择好的Skill复制进.gaoagent下面的skills目录
-        7,显示已经导入的RAG,并提示用户选择.用户可跳过.将选择好的RAG复制进.gaoagent下面的rag目录(暂时不实现)
+        7,显示已加载的全局 RAG 知识库并提示用户选择.用户可跳过.将选择好的知识库复制到项目 .gaoagent/rag 目录
         8,如果当前项目目录下有 .gitignore 文件,则将.gaoagent目录添加到 .gitignore 文件中.
         9,初始化完成.
         10,创建项目索引,加速全局搜索
@@ -46,6 +46,7 @@ class CoreInit:
         global_api_file = global_dir / "gao_client_api_config.json"
         global_mcp_file = global_dir / "gao_client_mcp_setting.json"
         global_skills_dir = global_dir / "skills"
+        global_rag_dir = global_dir / "rag"
 
         apis = self._load_global_apis(config_default, global_api_file)
         if not apis:
@@ -95,7 +96,19 @@ class CoreInit:
         else:
             click.echo("未选择任何 Skill（已跳过）")
 
-        click.echo("RAG 初始化暂不实现（已跳过）")
+        selected_rag = self._prompt_select_rag(global_rag_dir)
+        if selected_rag:
+            project_rag_dir = project_dir / "rag"
+            project_rag_dir.mkdir(parents=True, exist_ok=True)
+            imported_count = 0
+            for kb_name in selected_rag:
+                src = global_rag_dir / kb_name
+                dst = project_rag_dir / kb_name
+                self._copy_dir(src, dst)
+                imported_count += 1
+            click.echo(f"已复制 RAG 知识库：{imported_count} 个 → {project_rag_dir}")
+        else:
+            click.echo("未选择任何 RAG 知识库（已跳过）")
 
         self._ensure_gitignore_contains(current_root, ".gaoagent/")
         self._register_project_root(registry_file, current_root)
@@ -225,6 +238,25 @@ class CoreInit:
 
         selected_set = set(selected_names)
         return [item for item in skills if item["name"] in selected_set]
+
+    def _prompt_select_rag(self, rag_dir: Path) -> list[str]:
+        if not rag_dir.exists() or not rag_dir.is_dir():
+            click.echo(f"未检测到全局 RAG 目录：{rag_dir}（已跳过）")
+            return []
+
+        names = sorted([p.name for p in rag_dir.iterdir() if p.is_dir()])
+        if not names:
+            click.echo("未加载到任何全局 RAG 知识库（已跳过）")
+            return []
+
+        click.echo("已加载的 RAG 知识库：")
+        for i, name in enumerate(names, start=1):
+            click.echo(f"{i}. {name}")
+
+        return self._prompt_multi_select(
+            "请选择 RAG 知识库（输入序号或名称，逗号分隔；回车跳过；输入 all 选择全部）",
+            names,
+        )
 
     def _prompt_multi_select(self, prompt: str, options: list[str]) -> list[str]:
         if not options:

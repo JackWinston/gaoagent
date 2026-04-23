@@ -138,24 +138,68 @@ def rag_group() -> None:
     pass
 
 
-@rag_group.command("index", help="构建索引")
-def rag_index_cmd() -> None:
-    dispatch("rag.index")
+@rag_group.command("list", help="列出知识库")
+def rag_list_cmd() -> None:
+    dispatch("rag.list")
 
 
-@rag_group.command("query", help="查询")
-def rag_query_cmd() -> None:
-    dispatch("rag.query")
+@rag_group.command("add", help="新增知识库（可选自定义切片器）")
+@click.argument("name", required=False)
+@click.argument("chunker_py_file", required=False)
+def rag_add_cmd(name: str | None, chunker_py_file: str | None) -> None:
+    """
+    新增知识库。
+
+    用法：
+    - gaoagent rag add [name] [chunker_py_file]
+
+    参数：
+    - name: 知识库名称（可省略，省略时进入交互输入）
+    - chunker_py_file: 自定义切片器 Python 文件路径（可省略）
+
+    自定义切片器方法签名（在 chunker_py_file 中定义）：
+    - def chunk_document(*, kb_name, kb_dir, file_path, text, chunk_size, chunk_overlap): ...
+
+    返回值要求：
+    - list[str]，每个元素是一段切片文本；或
+    - list[dict]，每项可包含：
+      - id: str（可选）
+      - document: str（必填）
+      - metadata: dict（可选）
+    """
+    dispatch("rag.add", name=name, chunker_py_file=chunker_py_file)
 
 
-@rag_group.command("status", help="查看状态")
-def rag_status_cmd() -> None:
-    dispatch("rag.status")
+@rag_group.command("remove", help="移除知识库")
+@click.argument("name", required=False)
+def rag_remove_cmd(name: str | None) -> None:
+    dispatch("rag.remove", name=name)
 
 
-@rag_group.command("clear", help="清理索引")
-def rag_clear_cmd() -> None:
-    dispatch("rag.clear")
+@rag_group.group("api", help="管理 RAG 远程 Embedding 配置")
+def rag_api_group() -> None:
+    pass
+
+
+@rag_api_group.command("list", help="列出远程配置")
+def rag_api_list_cmd() -> None:
+    dispatch("rag.api.list")
+
+
+@rag_api_group.command("add", help="新增远程配置")
+def rag_api_add_cmd() -> None:
+    dispatch("rag.api.add")
+
+
+@rag_api_group.command("edit", help="编辑远程配置")
+def rag_api_edit_cmd() -> None:
+    dispatch("rag.api.edit")
+
+
+@rag_api_group.command("remove", help="移除远程配置")
+@click.argument("name", required=False)
+def rag_api_remove_cmd(name: str | None) -> None:
+    dispatch("rag.api.remove", name=name)
 
 
 @cli.group("api", help="OpenAI API 相关命令")

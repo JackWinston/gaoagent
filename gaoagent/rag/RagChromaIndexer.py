@@ -10,7 +10,7 @@ import time
 import urllib.request
 import urllib.error
 
-from gaoagent.rag.RagStorePath import resolve_chroma_store_dir
+from gaoagent.rag.RagStorePath import resolve_chroma_store_dir, resolve_index_meta_file
 
 
 @dataclass
@@ -47,7 +47,7 @@ class RagChromaIndexer:
     1. 扫描知识库目录，仅收集 `.md/.txt` 文件；
     2. 读取文本并按配置切片；
     3. 使用 Chroma embedding_function 生成向量并持久化写入；
-    4. 写入 `index_meta.json` 记录本次索引基本信息。
+    4. 写入 `.chrome_store/.../index_meta.json` 记录本次索引基本信息。
     """
     _SUPPORTED_SUFFIX = {".md", ".txt"}
 
@@ -85,6 +85,7 @@ class RagChromaIndexer:
             text = self._read_text(file_path)
             if not text:
                 # 无法读取或内容为空时跳过该文件，不中断整体流程。
+                print(f"无法读取或内容为空文件：{file_path}")
                 continue
             try:
                 chunks.extend(
@@ -612,7 +613,9 @@ class RagChromaIndexer:
             "store": "chromadb",
             "store_dir": str(resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_name).resolve()),
         }
-        (kb_dir / "index_meta.json").write_text(
+        meta_file = resolve_index_meta_file(kb_dir=kb_dir, kb_name=kb_name)
+        meta_file.parent.mkdir(parents=True, exist_ok=True)
+        meta_file.write_text(
             json.dumps(meta, ensure_ascii=False, indent=2, sort_keys=True),
             encoding="utf-8",
         )

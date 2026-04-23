@@ -9,6 +9,11 @@ import datetime
 
 from gaoagent.core.CoreConfigDefault import CoreConfigDefault
 from gaoagent.mcp.MCPClientCompat import MCPStdioClientSync, build_mcp_tools_cache_payload
+from gaoagent.rag.RagStorePath import (
+    resolve_chroma_store_dir,
+    resolve_index_meta_file,
+    is_internal_rag_store_dir_name,
+)
 
 
 class CoreInit:
@@ -105,6 +110,11 @@ class CoreInit:
                 src = global_rag_dir / kb_name
                 dst = project_rag_dir / kb_name
                 self._copy_dir(src, dst)
+                src_store_dir = resolve_chroma_store_dir(kb_dir=src, kb_name=kb_name)
+                dst_store_dir = resolve_chroma_store_dir(kb_dir=dst, kb_name=kb_name)
+                if src_store_dir.exists() and src_store_dir.is_dir():
+                    self._copy_dir(src_store_dir, dst_store_dir)
+                    self._rewrite_index_meta_store_dir(kb_dir=dst, kb_name=kb_name)
                 imported_count += 1
             click.echo(f"已复制 RAG 知识库：{imported_count} 个 → {project_rag_dir}")
         else:
@@ -244,7 +254,7 @@ class CoreInit:
             click.echo(f"未检测到全局 RAG 目录：{rag_dir}（已跳过）")
             return []
 
-        names = sorted([p.name for p in rag_dir.iterdir() if p.is_dir()])
+        names = sorted([p.name for p in rag_dir.iterdir() if p.is_dir() and not is_internal_rag_store_dir_name(p.name)])
         if not names:
             click.echo("未加载到任何全局 RAG 知识库（已跳过）")
             return []
@@ -314,6 +324,22 @@ class CoreInit:
         if dst.exists():
             shutil.rmtree(dst)
         shutil.copytree(src, dst)
+
+    def _rewrite_index_meta_store_dir(self, *, kb_dir: Path, kb_name: str) -> None:
+        meta_file = resolve_index_meta_file(kb_dir=kb_dir, kb_name=kb_name)
+        if not meta_file.exists() or not meta_file.is_file():
+            return
+        try:
+            data = json.loads(meta_file.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if not isinstance(data, dict):
+            return
+        data["store_dir"] = str(resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_name).resolve())
+        meta_file.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
 
     def _ensure_gitignore_contains(self, project_root: Path, entry: str) -> None:
         gitignore = project_root / ".gitignore"

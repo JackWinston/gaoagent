@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from gaoagent.rag.RagApiConfig import RagApiConfigStore
-from gaoagent.rag.RagStorePath import resolve_chroma_store_dir
+from gaoagent.rag.RagStorePath import resolve_chroma_store_dir, resolve_index_meta_file
 from gaoagent.core.runner.Utils import _find_config_file
 
 
@@ -22,7 +22,7 @@ class RagChromaRetriever:
         self.rag_dir = _find_config_file("rag").resolve()
         self.kb_dir = self.rag_dir / kb_name
         self.store_dir = resolve_chroma_store_dir(kb_dir=self.kb_dir, kb_name=kb_name)
-        self.meta_file = self.kb_dir / "index_meta.json"
+        self.meta_file = resolve_index_meta_file(kb_dir=self.kb_dir, kb_name=kb_name)
 
     def search(self, query: str, top_k: int = 5, score_threshold: float = 0.0) -> dict[str, Any]:
         """

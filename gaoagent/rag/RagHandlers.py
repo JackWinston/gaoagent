@@ -1,11 +1,16 @@
 import click
 import shutil
+import json
 from pathlib import Path
 from typing import Any
 
 from gaoagent.core.CoreConfigDefault import CoreConfigDefault
 from gaoagent.rag.RagApiConfig import RagApiConfigStore
-from gaoagent.rag.RagStorePath import resolve_chroma_store_dir
+from gaoagent.rag.RagStorePath import (
+    resolve_chroma_store_dir,
+    resolve_index_meta_file,
+    is_internal_rag_store_dir_name,
+)
 
 
 class RagHandlers:
@@ -64,6 +69,7 @@ class RagHandlers:
             click.echo(f"同步失败：未找到 Chroma 存储目录：{src_store_dir}")
             return
         self._copy_dir(src_store_dir, dst_store_dir)
+        self._rewrite_index_meta_store_dir(kb_dir=dst_dir, kb_name=kb_name)
         click.echo(f"已同步知识库到全局目录：{dst_dir}")
 
     def remove(self, name: str | None = None) -> None:
@@ -223,7 +229,7 @@ class RagHandlers:
             [
                 p.name
                 for p in rag_dir.iterdir()
-                if p.is_dir() and p.name != "chroma_store"
+                if p.is_dir() and not is_internal_rag_store_dir_name(p.name)
             ]
         )
 
@@ -279,6 +285,22 @@ class RagHandlers:
         if dst.exists():
             shutil.rmtree(dst)
         shutil.copytree(src, dst)
+
+    def _rewrite_index_meta_store_dir(self, *, kb_dir: Path, kb_name: str) -> None:
+        meta_file = resolve_index_meta_file(kb_dir=kb_dir, kb_name=kb_name)
+        if not meta_file.exists() or not meta_file.is_file():
+            return
+        try:
+            data = json.loads(meta_file.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if not isinstance(data, dict):
+            return
+        data["store_dir"] = str(resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_name).resolve())
+        meta_file.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
 
     def _prompt_non_empty_str(self, prompt: str, *, hide_input: bool = False, default: str | None = None) -> str:
         while True:

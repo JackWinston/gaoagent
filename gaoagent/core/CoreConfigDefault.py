@@ -15,7 +15,7 @@ from gaoagent.mcp.MCPClientCompat import (
 from gaoagent.core.runner.Utils import scan_skills_metadata
 from gaoagent.rag.RagApiConfig import RagApiConfigStore
 from gaoagent.rag.RagChromaIndexer import RagChromaIndexer, RagChromaIndexerConfig
-from gaoagent.rag.RagStorePath import resolve_chroma_store_dir
+from gaoagent.rag.RagStorePath import resolve_chroma_store_dir, resolve_index_meta_file
 
 
 class CoreConfigDefault:
@@ -368,11 +368,12 @@ class CoreConfigDefault:
         备份已有知识库目录中的向量库与索引文件。
 
         仅备份：
-        - `.gaoagent/rag/chroma_store/` 下的 Chroma 存储目录
-        - index_meta.json
+        - `.gaoagent/rag/.chrome_store/` 下的 Chroma 存储目录
+        - 同目录下的 index_meta.json
         """
         store_dir = resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_dir.name)
-        targets = [store_dir, kb_dir / "index_meta.json"]
+        meta_file = resolve_index_meta_file(kb_dir=kb_dir, kb_name=kb_dir.name)
+        targets = [store_dir, meta_file]
         existing = [p for p in targets if p.exists()]
         if not existing:
             return 0
@@ -392,7 +393,8 @@ class CoreConfigDefault:
 
     def _remove_rag_artifacts(self, kb_dir: Path) -> None:
         store_dir = resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_dir.name)
-        targets = [store_dir, kb_dir / "index_meta.json"]
+        meta_file = resolve_index_meta_file(kb_dir=kb_dir, kb_name=kb_dir.name)
+        targets = [store_dir, meta_file]
         for p in targets:
             if not p.exists():
                 continue

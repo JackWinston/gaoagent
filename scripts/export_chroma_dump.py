@@ -8,7 +8,7 @@ from typing import Any
 
 from chromadb import PersistentClient
 
-from gaoagent.rag.RagStorePath import resolve_chroma_store_dir
+from gaoagent.rag.RagStorePath import resolve_chroma_store_dir, resolve_index_meta_file
 
 
 def _default_rag_root() -> Path:
@@ -138,7 +138,7 @@ def export_kb(
         "collections": [],
     }
 
-    index_meta = _safe_read_json(kb_dir / "index_meta.json")
+    index_meta = _safe_read_json(resolve_index_meta_file(kb_dir=kb_dir, kb_name=kb_name))
     if index_meta is not None:
         _write_json(kb_out_dir / "index_meta.json", index_meta)
         summary["index_meta"] = index_meta

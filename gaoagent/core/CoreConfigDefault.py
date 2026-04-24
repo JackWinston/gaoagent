@@ -385,6 +385,44 @@ class CoreConfigDefault:
         click.echo(f"知识库创建成功：{selected_name}")
         return True
 
+    def update_rag_knowledge_base(
+        self,
+        *,
+        kb_name: str,
+        rag_root_dir: Path | None = None,
+        chunker_py_file: str | None = None,
+    ) -> bool:
+        """
+        更新指定知识库（增量入库）。
+
+        行为:
+        - 仅对新增 chunk 做增量写入；
+        - 同步维护 Chroma 向量索引与 BM25 稀疏索引；
+        - 若索引缺失则自动创建后再执行更新。
+        """
+        selected_name = (kb_name or "").strip()
+        if not selected_name:
+            click.echo("知识库名称不能为空")
+            return False
+
+        rag_dir = rag_root_dir if rag_root_dir is not None else (self._ensure_config_dir() / "rag")
+        kb_dir = rag_dir / selected_name
+        if not kb_dir.exists() or not kb_dir.is_dir():
+            click.echo(f"知识库不存在：{selected_name}")
+            return False
+
+        (ok, reason) = self._build_rag_vector_store(
+            kb_name=selected_name,
+            kb_dir=kb_dir,
+            chunker_py_file=chunker_py_file,
+            update_mode=True,
+        )
+        if not ok:
+            click.echo(f"知识库更新失败：{reason}")
+            return False
+        click.echo(f"知识库更新成功：{selected_name}")
+        return True
+
     def _backup_existing_rag_artifacts(self, kb_dir: Path) -> int:
         """
         备份已有知识库目录中的向量库与索引文件。
@@ -453,6 +491,7 @@ class CoreConfigDefault:
         kb_name: str,
         kb_dir: Path,
         chunker_py_file: str | None = None,
+        update_mode: bool = False,
     ) -> tuple[bool, str]:
         """
         构建知识库 Embedding 并写入向量库。
@@ -472,6 +511,8 @@ class CoreConfigDefault:
         if custom_chunker:
             indexer_config.chunker_py_file = custom_chunker
         indexer = RagChromaIndexer(indexer_config)
+        if update_mode:
+            return indexer.update_knowledge_base(kb_name=kb_name, kb_dir=kb_dir)
         return indexer.ingest_knowledge_base(kb_name=kb_name, kb_dir=kb_dir)
 
     def _prompt_import_rag_api_after_copy(self, *, kb_name: str, rag_dir: Path) -> None:

@@ -191,6 +191,23 @@ def rag_add_cmd(name: str | None, chunker_py_file: str | None) -> None:
     dispatch("rag.add", name=name, chunker_py_file=chunker_py_file)
 
 
+@rag_group.command("update", help="更新知识库（增量入库，可选自定义切片器）")
+@click.argument("name", required=False)
+@click.argument("chunker_py_file", required=False)
+def rag_update_cmd(name: str | None, chunker_py_file: str | None) -> None:
+    """
+    更新知识库。
+
+    用法：
+    - gaoagent rag update [name] [chunker_py_file]
+
+    参数：
+    - name: 知识库名称（可省略，省略时进入交互选择）
+    - chunker_py_file: 自定义切片器 Python 文件路径（可省略）
+    """
+    dispatch("rag.update", name=name, chunker_py_file=chunker_py_file)
+
+
 @rag_group.command("remove", help="移除知识库")
 @click.argument("name", required=False)
 def rag_remove_cmd(name: str | None) -> None:

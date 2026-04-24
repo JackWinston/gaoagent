@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import importlib.util
 from pathlib import Path
 from typing import Any
+from collections import Counter
 import json
 import re
 import time
@@ -11,7 +12,11 @@ import gc
 import urllib.request
 import urllib.error
 
-from gaoagent.rag.RagStorePath import resolve_chroma_store_dir, resolve_index_meta_file
+from gaoagent.rag.RagStorePath import (
+    resolve_chroma_store_dir,
+    resolve_index_meta_file,
+    resolve_bm25_index_file,
+)
 
 
 @dataclass
@@ -185,6 +190,142 @@ class RagChromaIndexer:
             client = None
             gc.collect()
             return (False, f"写入向量库失败：{e}")
+
+        self._write_index_meta(
+            kb_dir=kb_dir,
+            kb_name=kb_name,
+            source_file_count=len(source_files),
+            chunk_count=final_chunk_count,
+        )
+        bm25_sync_ok, bm25_reason = self._sync_bm25_index(
+            kb_dir=kb_dir,
+            kb_name=kb_name,
+            collection=collection,
+            incremental_chunks=None,
+            force_rebuild=True,
+        )
+        if not bm25_sync_ok:
+            return (False, f"写入 BM25 稀疏索引失败：{bm25_reason}")
+        return (True, "")
+
+    def update_knowledge_base(self, *, kb_name: str, kb_dir: Path) -> tuple[bool, str]:
+        """
+        对已存在知识库执行增量更新。
+
+        行为:
+        1. 扫描并切片当前语料；
+        2. 检查向量索引与 BM25 稀疏索引是否存在；
+        3. 缺失则创建，存在则仅增量插入“新 chunk”；
+        4. 统一刷新 `index_meta.json`。
+        """
+        if not kb_dir.exists() or not kb_dir.is_dir():
+            return (False, f"知识库目录不存在：{kb_dir}")
+        if self._config.chunk_overlap >= self._config.chunk_size:
+            return (False, "chunk_overlap 必须小于 chunk_size")
+
+        source_files = self._list_source_files(kb_dir)
+        if not source_files:
+            return (False, "未发现可入库文件（仅支持 .md/.txt）")
+
+        chunks: list[dict[str, Any]] = []
+        for file_path in source_files:
+            text = self._read_text(file_path)
+            if not text:
+                print(f"无法读取或内容为空文件：{file_path}")
+                continue
+            try:
+                chunks.extend(
+                    self._chunk_document(
+                        kb_name=kb_name,
+                        kb_dir=kb_dir,
+                        file_path=file_path,
+                        text=text,
+                    )
+                )
+            except Exception as e:
+                return (False, f"文档切片失败（{file_path.name}）：{e}")
+
+        if not chunks:
+            return (False, "可入库文件内容为空")
+
+        try:
+            from chromadb import PersistentClient
+        except Exception as e:
+            return (False, f"导入 chromadb 失败：{e}")
+
+        store_dir = resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_name)
+        store_dir.mkdir(parents=True, exist_ok=True)
+        collection_name = self._sanitize_collection_name(kb_name)
+        bm25_index_file = resolve_bm25_index_file(kb_dir=kb_dir, kb_name=kb_name)
+
+        client: Any | None = None
+        try:
+            client = PersistentClient(path=str(store_dir))
+            use_remote = self._use_remote_embedding()
+            if use_remote:
+                collection = client.get_or_create_collection(
+                    name=collection_name,
+                    metadata={
+                        "kb_name": kb_name,
+                        "embedding_mode": "remote",
+                        "embedding_model": self._config.remote_embedding_model,
+                    },
+                )
+            else:
+                try:
+                    from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+                except Exception as e:
+                    return (False, f"导入本地 embedding 依赖失败：{e}")
+                embedding_fn = SentenceTransformerEmbeddingFunction(model_name=self._config.embedding_model)
+                collection = client.get_or_create_collection(
+                    name=collection_name,
+                    embedding_function=embedding_fn,
+                    metadata={
+                        "kb_name": kb_name,
+                        "embedding_mode": "local",
+                        "embedding_model": self._config.embedding_model,
+                    },
+                )
+
+            # 仅插入当前 collection 中不存在的新 chunk，实现增量更新。
+            existing_ids: set[str] = set()
+            batch_size = self._config.batch_size
+            for i in range(0, len(chunks), batch_size):
+                probe_ids = [str(item["id"]) for item in chunks[i: i + batch_size]]
+                existing_ids.update(self._get_existing_ids_in_collection(collection=collection, ids=probe_ids))
+
+            new_chunks = [item for item in chunks if str(item["id"]) not in existing_ids]
+            if new_chunks:
+                total_new = len(new_chunks)
+                total_batches = (total_new + batch_size - 1) // batch_size
+                print(f"[RAG] 增量写入向量：new={total_new}, batch_size={batch_size}, batches={total_batches}")
+                for i in range(0, total_new, batch_size):
+                    batch = new_chunks[i: i + batch_size]
+                    ids = [str(item["id"]) for item in batch]
+                    docs = [str(item["document"]) for item in batch]
+                    metas = [dict(item["metadata"]) for item in batch]
+                    if use_remote:
+                        embeddings = self._embed_remote(docs)
+                        collection.upsert(ids=ids, documents=docs, metadatas=metas, embeddings=embeddings)
+                    else:
+                        collection.upsert(ids=ids, documents=docs, metadatas=metas)
+            else:
+                print("[RAG] 未检测到新增 chunk，跳过向量增量写入。")
+
+            final_chunk_count = int(collection.count())
+            bm25_sync_ok, bm25_reason = self._sync_bm25_index(
+                kb_dir=kb_dir,
+                kb_name=kb_name,
+                collection=collection,
+                incremental_chunks=new_chunks,
+                force_rebuild=(not bm25_index_file.exists()),
+            )
+            if not bm25_sync_ok:
+                return (False, f"写入 BM25 稀疏索引失败：{bm25_reason}")
+        except Exception as e:
+            client = None
+            gc.collect()
+            return (False, f"增量写入向量库失败：{e}")
 
         self._write_index_meta(
             kb_dir=kb_dir,
@@ -379,6 +520,183 @@ class RagChromaIndexer:
                 }
             )
         return normalized
+
+    def _sync_bm25_index(
+        self,
+        *,
+        kb_dir: Path,
+        kb_name: str,
+        collection: Any,
+        incremental_chunks: list[dict[str, Any]] | None,
+        force_rebuild: bool,
+    ) -> tuple[bool, str]:
+        """
+        同步 BM25 稀疏索引文件。
+
+        策略:
+        - `force_rebuild=True` 或索引文件缺失/损坏：全量重建；
+        - 其余情况：对新增 chunk 执行增量插入。
+        """
+        bm25_file = resolve_bm25_index_file(kb_dir=kb_dir, kb_name=kb_name)
+        try:
+            if force_rebuild or (not bm25_file.exists()):
+                records = self._load_collection_records(collection=collection)
+                payload = self._build_bm25_index_payload(kb_name=kb_name, records=records)
+                self._write_bm25_index(bm25_file=bm25_file, payload=payload)
+                return (True, "")
+
+            payload = self._read_bm25_index(bm25_file=bm25_file)
+            if payload is None or not self._is_valid_bm25_index_payload(payload):
+                records = self._load_collection_records(collection=collection)
+                rebuilt = self._build_bm25_index_payload(kb_name=kb_name, records=records)
+                self._write_bm25_index(bm25_file=bm25_file, payload=rebuilt)
+                return (True, "")
+
+            chunks = incremental_chunks or []
+            if chunks:
+                self._apply_incremental_chunks_to_bm25(payload=payload, chunks=chunks)
+                self._write_bm25_index(bm25_file=bm25_file, payload=payload)
+            return (True, "")
+        except Exception as e:
+            return (False, str(e))
+
+    def _load_collection_records(self, *, collection: Any) -> list[dict[str, Any]]:
+        """读取 collection 全量文档记录，用于构建 BM25 索引。"""
+        records: list[dict[str, Any]] = []
+        page_size = 512
+        offset = 0
+        while True:
+            payload = collection.get(include=["documents", "metadatas"], limit=page_size, offset=offset)
+            page_ids = payload.get("ids") or []
+            page_docs = payload.get("documents") or []
+            page_metas = payload.get("metadatas") or []
+            if not page_ids:
+                break
+            for cid, doc, meta in zip(page_ids, page_docs, page_metas):
+                records.append(
+                    {
+                        "id": str(cid),
+                        "document": str(doc),
+                        "metadata": dict(meta) if isinstance(meta, dict) else {},
+                    }
+                )
+            if len(page_ids) < page_size:
+                break
+            offset += len(page_ids)
+        return records
+
+    def _build_bm25_index_payload(self, *, kb_name: str, records: list[dict[str, Any]]) -> dict[str, Any]:
+        """基于全量记录构建 BM25 倒排索引载荷。"""
+        postings: dict[str, dict[str, Any]] = {}
+        doc_len: dict[str, int] = {}
+        documents: dict[str, str] = {}
+        metadatas: dict[str, dict[str, Any]] = {}
+        total_len = 0
+
+        for item in records:
+            cid = str(item.get("id") or "")
+            if not cid:
+                continue
+            text = str(item.get("document") or "")
+            meta = item.get("metadata")
+            metadata = dict(meta) if isinstance(meta, dict) else {}
+            tokens = self._tokenize_for_bm25(text)
+            tf = Counter(tokens)
+            dl = len(tokens)
+            doc_len[cid] = dl
+            documents[cid] = text
+            metadatas[cid] = metadata
+            total_len += dl
+            for token, term_tf in tf.items():
+                bucket = postings.setdefault(token, {"df": 0, "docs": {}})
+                bucket["docs"][cid] = int(term_tf)
+
+        for bucket in postings.values():
+            docs_map = bucket.get("docs", {})
+            bucket["df"] = len(docs_map) if isinstance(docs_map, dict) else 0
+
+        doc_count = len(doc_len)
+        avgdl = (total_len / doc_count) if doc_count > 0 else 0.0
+        return {
+            "version": 1,
+            "kb_name": kb_name,
+            "doc_count": doc_count,
+            "avgdl": avgdl,
+            "doc_len": doc_len,
+            "documents": documents,
+            "metadatas": metadatas,
+            "postings": postings,
+        }
+
+    def _apply_incremental_chunks_to_bm25(self, *, payload: dict[str, Any], chunks: list[dict[str, Any]]) -> None:
+        """将新增 chunk 增量写入已存在的 BM25 索引载荷。"""
+        doc_len = payload.setdefault("doc_len", {})
+        documents = payload.setdefault("documents", {})
+        metadatas = payload.setdefault("metadatas", {})
+        postings = payload.setdefault("postings", {})
+
+        for item in chunks:
+            cid = str(item.get("id") or "")
+            if not cid or cid in doc_len:
+                continue
+            text = str(item.get("document") or "")
+            meta = item.get("metadata")
+            metadata = dict(meta) if isinstance(meta, dict) else {}
+            tokens = self._tokenize_for_bm25(text)
+            tf = Counter(tokens)
+            doc_len[cid] = len(tokens)
+            documents[cid] = text
+            metadatas[cid] = metadata
+            for token, term_tf in tf.items():
+                bucket = postings.setdefault(token, {"df": 0, "docs": {}})
+                docs_map = bucket.setdefault("docs", {})
+                if cid not in docs_map:
+                    docs_map[cid] = int(term_tf)
+                bucket["df"] = len(docs_map)
+
+        doc_count = len(doc_len)
+        total_len = sum(int(v) for v in doc_len.values())
+        payload["doc_count"] = doc_count
+        payload["avgdl"] = (total_len / doc_count) if doc_count > 0 else 0.0
+
+    def _write_bm25_index(self, *, bm25_file: Path, payload: dict[str, Any]) -> None:
+        """原子写入 BM25 索引文件。"""
+        bm25_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp_file = bm25_file.with_name(f"{bm25_file.name}.tmp")
+        tmp_file.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        tmp_file.replace(bm25_file)
+
+    def _read_bm25_index(self, *, bm25_file: Path) -> dict[str, Any] | None:
+        """读取 BM25 索引文件；读取失败返回 None。"""
+        if not bm25_file.exists() or not bm25_file.is_file():
+            return None
+        try:
+            data = json.loads(bm25_file.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    def _is_valid_bm25_index_payload(self, payload: dict[str, Any]) -> bool:
+        """校验 BM25 索引载荷结构是否满足最小要求。"""
+        required = ("doc_count", "avgdl", "doc_len", "documents", "metadatas", "postings")
+        for key in required:
+            if key not in payload:
+                return False
+        return isinstance(payload.get("postings"), dict) and isinstance(payload.get("doc_len"), dict)
+
+    def _tokenize_for_bm25(self, text: str) -> list[str]:
+        """轻量 BM25 分词：英文按词，中文按单字。"""
+        normalized = str(text or "").lower()
+        tokens: list[str] = []
+        for seg in re.findall(r"[\u4e00-\u9fff]+|[a-z0-9_]+", normalized):
+            if re.fullmatch(r"[\u4e00-\u9fff]+", seg):
+                tokens.extend(list(seg))
+            else:
+                tokens.append(seg)
+        return tokens
 
     def _sanitize_collection_name(self, kb_name: str) -> str:
         """将知识库名转换为 Chroma 可接受的 collection 名称。"""

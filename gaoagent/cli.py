@@ -1,4 +1,5 @@
 import click
+from gaoagent.core.runner.Console import Console
 
 from gaoagent import __version__
 from gaoagent.router import dispatch
@@ -78,7 +79,7 @@ def task_cmd(question: str | None, mode: str) -> None:
     """
     q = (question or "").strip()
     if not q:
-        q = click.prompt("请输入任务", type=str).strip()
+        q = Console.prompt("请输入任务", type=str).strip()
     dispatch("task", question=q, mode=mode)
 
 

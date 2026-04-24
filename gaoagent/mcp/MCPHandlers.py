@@ -47,10 +47,10 @@ class MCPHandlers:
         (scope, config_file) = self._resolve_scope_and_config_path()
         servers = self._load_mcp_servers(config_file)
         if not servers:
-            Console.echo(f"未检测到{scope} MCP 服务：{config_file}")
+            Console.info(f"未检测到{scope} MCP 服务：{config_file}")
             return
 
-        Console.echo(f"{scope} MCP 服务列表：")
+        Console.info(f"{scope} MCP 服务列表：")
         for idx, name in enumerate(sorted(servers.keys()), start=1):
             body = servers.get(name)
             status = self._status_of(body)
@@ -60,7 +60,7 @@ class MCPHandlers:
                 if isinstance(server_type, str) and server_type.strip()
                 else ""
             )
-            Console.echo(f"{idx}. {name} [{status}{suffix}]")
+            Console.info(f"{idx}. {name} [{status}{suffix}]")
 
     def add(self) -> None:
         """交互添加一条 MCP 服务配置。
@@ -79,14 +79,14 @@ class MCPHandlers:
             project_file = project_config_root / self._MCP_CONFIG_FILENAME
             self._upsert_mcp_server(global_file, name, body)
             self._upsert_mcp_server(project_file, name, body)
-            Console.echo(f"已添加 MCP：{name}")
-            Console.echo(f"- 全局配置：{global_file}")
-            Console.echo(f"- 项目配置：{project_file}")
+            Console.info(f"已添加 MCP：{name}")
+            Console.info(f"- 全局配置：{global_file}")
+            Console.info(f"- 项目配置：{project_file}")
             return
 
         self._upsert_mcp_server(global_file, name, body)
-        Console.echo(f"已添加 MCP：{name}")
-        Console.echo(f"- 全局配置：{global_file}")
+        Console.info(f"已添加 MCP：{name}")
+        Console.info(f"- 全局配置：{global_file}")
 
     def remove(self, name: str | None = None) -> None:
         """删除指定 MCP 服务配置。
@@ -100,7 +100,7 @@ class MCPHandlers:
         (scope, config_file) = self._resolve_scope_and_config_path()
         servers = self._load_mcp_servers(config_file)
         if not servers:
-            Console.echo(f"未检测到{scope} MCP 配置：{config_file}")
+            Console.info(f"未检测到{scope} MCP 配置：{config_file}")
             return
 
         target = self._resolve_target_name(servers, action="移除", name=name)
@@ -109,7 +109,7 @@ class MCPHandlers:
 
         del servers[target]
         self._write_mcp_servers(config_file, servers)
-        Console.echo(f"已从{scope}配置移除 MCP：{target}")
+        Console.info(f"已从{scope}配置移除 MCP：{target}")
 
     def enable(self, name: str | None = None) -> None:
         """将目标 MCP 服务标记为启用（`disabled=false`）。"""
@@ -133,7 +133,7 @@ class MCPHandlers:
         (scope, config_file) = self._resolve_scope_and_config_path()
         servers = self._load_mcp_servers(config_file)
         if not servers:
-            Console.echo(f"未检测到{scope} MCP 配置：{config_file}")
+            Console.info(f"未检测到{scope} MCP 配置：{config_file}")
             return
 
         target = self._resolve_target_name(servers, action="测试", name=name)
@@ -141,10 +141,10 @@ class MCPHandlers:
             return
         body = servers.get(target)
         if not isinstance(body, dict):
-            Console.echo(f"MCP 配置无效：{target}")
+            Console.info(f"MCP 配置无效：{target}")
             return
         if body.get("disabled") is True:
-            Console.echo(
+            Console.info(
                 f"提示：MCP `{target}` 当前状态为 disabled=true，仍将尝试连通性测试"
             )
 
@@ -154,8 +154,8 @@ class MCPHandlers:
                 server_name=target, config=body
             ).list_tools()
             duration_ms = int((time.perf_counter() - start) * 1000)
-            Console.echo(f"测试通过：{target}（{duration_ms} ms）")
-            Console.echo(f"可用工具数：{len(tools)}")
+            Console.info(f"测试通过：{target}（{duration_ms} ms）")
+            Console.info(f"可用工具数：{len(tools)}")
             if tools:
                 tool_names = [
                     str(item.get("name"))
@@ -163,11 +163,11 @@ class MCPHandlers:
                     if isinstance(item, dict) and item.get("name")
                 ]
                 if tool_names:
-                    Console.echo(f"工具：{', '.join(tool_names)}")
+                    Console.info(f"工具：{', '.join(tool_names)}")
         except Exception as e:
             duration_ms = int((time.perf_counter() - start) * 1000)
-            Console.echo(f"测试失败：{target}（{duration_ms} ms）")
-            Console.echo(str(e))
+            Console.info(f"测试失败：{target}（{duration_ms} ms）")
+            Console.info(str(e))
 
     def _set_disabled_flag(self, disabled: bool, *, name: str | None = None) -> None:
         """统一处理 enable/disable 命令的内部实现。"""
@@ -175,7 +175,7 @@ class MCPHandlers:
         (scope, config_file) = self._resolve_scope_and_config_path()
         servers = self._load_mcp_servers(config_file)
         if not servers:
-            Console.echo(f"未检测到{scope} MCP 配置：{config_file}")
+            Console.info(f"未检测到{scope} MCP 配置：{config_file}")
             return
 
         target = self._resolve_target_name(servers, action=action, name=name)
@@ -184,13 +184,13 @@ class MCPHandlers:
 
         body = servers.get(target)
         if not isinstance(body, dict):
-            Console.echo(f"未找到 MCP：{target}")
+            Console.info(f"未找到 MCP：{target}")
             return
 
         body["disabled"] = disabled
         servers[target] = body
         self._write_mcp_servers(config_file, servers)
-        Console.echo(f"已更新 {scope} MCP：{target}, disabled={str(disabled).lower()}")
+        Console.info(f"已更新 {scope} MCP：{target}, disabled={str(disabled).lower()}")
 
     def _resolve_scope_and_config_path(self) -> tuple[str, Path]:
         """解析当前操作作用域并返回对应配置文件路径。
@@ -243,19 +243,19 @@ class MCPHandlers:
         """交互读取并校验单条 MCP 配置 JSON（格式错误会循环重试）。"""
         validator = CoreConfigDefault()
         while True:
-            raw = click.prompt("请输入 MCP JSON对象", type=str).strip()
+            raw = Console.prompt("请输入 MCP JSON对象", type=str).strip()
             try:
                 value = json.loads(raw)
             except Exception:
-                Console.echo("格式错误：请输入合法的 JSON 对象")
+                Console.info("格式错误：请输入合法的 JSON 对象")
                 continue
             if not isinstance(value, dict):
-                Console.echo("格式错误：MCP 配置必须是 JSON 对象")
+                Console.info("格式错误：MCP 配置必须是 JSON 对象")
                 continue
             try:
                 validator._validate_mcp_config(value)
             except Exception as e:
-                Console.echo(f"格式错误：{e}")
+                Console.info(f"格式错误：{e}")
                 continue
             return value
 
@@ -264,13 +264,13 @@ class MCPHandlers:
         names = sorted([str(x) for x in servers.keys()])
         default_name = names[0] if names else ""
         if default_name:
-            return click.prompt(
+            return Console.prompt(
                 f"请输入要{action}的 MCP 名称",
                 type=click.Choice(names, case_sensitive=False),
                 default=default_name,
                 show_default=True,
             )
-        return click.prompt(f"请输入要{action}的 MCP 名称", type=str).strip()
+        return Console.prompt(f"请输入要{action}的 MCP 名称", type=str).strip()
 
     def _resolve_target_name(
         self, servers: dict[str, Any], *, action: str, name: str | None
@@ -282,7 +282,7 @@ class MCPHandlers:
         for candidate in servers.keys():
             if isinstance(candidate, str) and candidate.lower() == lowered:
                 return candidate
-        Console.echo(f"未找到 MCP：{name}")
+        Console.info(f"未找到 MCP：{name}")
         return None
 
     def _status_of(self, body: Any) -> str:

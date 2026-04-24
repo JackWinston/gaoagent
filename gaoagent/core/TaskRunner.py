@@ -84,7 +84,7 @@ class TaskRunner:
 
         if result.success:
             if result.final_result:
-                Console.echo(result.final_result)
+                Console.info(result.final_result)
             return
 
-        Console.echo(f"任务失败：{result.error or 'unknown error'}")
+        Console.error(f"任务失败：{result.error or 'unknown error'}")

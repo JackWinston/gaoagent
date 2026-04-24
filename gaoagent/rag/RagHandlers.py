@@ -31,17 +31,17 @@ class RagHandlers:
         """列出当前作用域下可见的知识库名称。"""
         (scope, rag_dir) = self._resolve_scope_and_rag_dir()
         if not rag_dir.exists() or not rag_dir.is_dir():
-            Console.echo(f"未检测到{scope} RAG 目录：{rag_dir}")
+            Console.info(f"未检测到{scope} RAG 目录：{rag_dir}")
             return
 
         names = self._list_kb_names(rag_dir)
         if not names:
-            Console.echo(f"当前{scope}无知识库")
+            Console.info(f"当前{scope}无知识库")
             return
 
-        Console.echo(f"当前{scope}知识库列表：")
+        Console.info(f"当前{scope}知识库列表：")
         for idx, name in enumerate(names, start=1):
-            Console.echo(f"{idx}. {name}")
+            Console.info(f"{idx}. {name}")
 
     def add(self, name: str | None = None, chunker_py_file: str | None = None) -> None:
         """新增知识库，并在项目与全局目录之间按规则同步。
@@ -53,7 +53,7 @@ class RagHandlers:
         """
         kb_name = (name or "").strip()
         if not kb_name:
-            kb_name = click.prompt("请输入要新增的知识库名称", type=str).strip()
+            kb_name = Console.prompt("请输入要新增的知识库名称", type=str).strip()
         chunker_file = (chunker_py_file or "").strip() or None
 
         project_root = try_project_root_dir()
@@ -76,36 +76,36 @@ class RagHandlers:
         src_dir = project_rag_dir / kb_name
         dst_dir = global_rag_dir / kb_name
         if dst_dir.exists():
-            should_overwrite = click.confirm(
+            should_overwrite = Console.confirm(
                 f"全局知识库已存在：{dst_dir}，是否覆盖？",
                 default=False,
             )
             if not should_overwrite:
-                Console.echo(f"已跳过同步到全局目录：{dst_dir}")
+                Console.info(f"已跳过同步到全局目录：{dst_dir}")
                 return
         self._copy_dir(src_dir, dst_dir)
         src_store_dir = resolve_chroma_store_dir(kb_dir=src_dir, kb_name=kb_name)
         dst_store_dir = resolve_chroma_store_dir(kb_dir=dst_dir, kb_name=kb_name)
         if not src_store_dir.exists() or not src_store_dir.is_dir():
-            Console.echo(f"同步失败：未找到 Chroma 存储目录：{src_store_dir}")
+            Console.info(f"同步失败：未找到 Chroma 存储目录：{src_store_dir}")
             return
         self._copy_dir(src_store_dir, dst_store_dir)
         self._rewrite_index_meta_store_dir(kb_dir=dst_dir, kb_name=kb_name)
-        Console.echo(f"已同步知识库到全局目录：{dst_dir}")
+        Console.info(f"已同步知识库到全局目录：{dst_dir}")
 
     def remove(self, name: str | None = None) -> None:
         """删除知识库目录及对应 Chroma 存储目录。"""
         (scope, rag_dir) = self._resolve_scope_and_rag_dir()
         if not rag_dir.exists() or not rag_dir.is_dir():
-            Console.echo(f"未检测到{scope} RAG 目录：{rag_dir}")
+            Console.info(f"未检测到{scope} RAG 目录：{rag_dir}")
             return
 
         names = self._list_kb_names(rag_dir)
         if not names:
-            Console.echo(f"当前{scope}无可移除的知识库")
+            Console.info(f"当前{scope}无可移除的知识库")
             return
 
-        target = name if (name is not None and name in names) else click.prompt(
+        target = name if (name is not None and name in names) else Console.prompt(
             "请输入要移除的知识库名称",
             type=click.Choice(names, case_sensitive=False),
             default=names[0],
@@ -113,14 +113,14 @@ class RagHandlers:
         )
         kb_dir = rag_dir / target
         if not kb_dir.exists() or not kb_dir.is_dir():
-            Console.echo(f"知识库不存在：{target}")
+            Console.info(f"知识库不存在：{target}")
             return
 
         store_dir = resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=target)
         if store_dir.exists() and store_dir.is_dir():
             shutil.rmtree(store_dir)
         shutil.rmtree(kb_dir)
-        Console.echo(f"已移除{scope}知识库：{target}")
+        Console.info(f"已移除{scope}知识库：{target}")
 
     def update(self, name: str | None = None, chunker_py_file: str | None = None) -> None:
         """
@@ -139,10 +139,10 @@ class RagHandlers:
             global_rag_dir = self._global_rag_dir()
             names = self._list_kb_names(global_rag_dir) if global_rag_dir.exists() else []
             if not names:
-                Console.echo("当前全局无可更新知识库")
+                Console.info("当前全局无可更新知识库")
                 return
             if target_name not in names:
-                target_name = click.prompt(
+                target_name = Console.prompt(
                     "请输入要更新的知识库名称",
                     type=click.Choice(names, case_sensitive=False),
                     default=names[0],
@@ -158,10 +158,10 @@ class RagHandlers:
         project_rag_dir = project_root / ".gaoagent" / "rag"
         names = self._list_kb_names(project_rag_dir) if project_rag_dir.exists() else []
         if not names:
-            Console.echo("当前项目无可更新知识库")
+            Console.info("当前项目无可更新知识库")
             return
         if target_name not in names:
-            target_name = click.prompt(
+            target_name = Console.prompt(
                 "请输入要更新的知识库名称",
                 type=click.Choice(names, case_sensitive=False),
                 default=names[0],
@@ -187,23 +187,23 @@ class RagHandlers:
         if src_store_dir.exists() and src_store_dir.is_dir():
             self._copy_dir(src_store_dir, dst_store_dir)
         self._rewrite_index_meta_store_dir(kb_dir=dst_dir, kb_name=target_name)
-        Console.echo(f"已同步更新后的知识库到全局目录：{dst_dir}")
+        Console.info(f"已同步更新后的知识库到全局目录：{dst_dir}")
 
     def search(self, kb_name: str, query: str, top_k: int = 3) -> None:
         """在指定知识库执行检索并输出结果摘要。"""
         from gaoagent.rag.RagChromaRetriever import RagChromaRetriever
         
-        Console.echo(f"正在知识库 '{kb_name}' 中检索: {query} (top_k={top_k})...")
+        Console.info(f"正在知识库 '{kb_name}' 中检索: {query} (top_k={top_k})...")
         retriever = RagChromaRetriever(kb_name=kb_name)
         res = retriever.search(query=query, top_k=top_k)
         
         if not res.get("success"):
-            Console.echo(f"检索失败: {res.get('error')}")
+            Console.info(f"检索失败: {res.get('error')}")
             return
             
         items = res.get("items", [])
         if not items:
-            Console.echo("未找到相关内容。")
+            Console.info("未找到相关内容。")
             return
             
         for idx, item in enumerate(items, 1):
@@ -211,8 +211,8 @@ class RagHandlers:
             dist = item.get("distance", 0)
             meta = item.get("metadata", {})
             src = meta.get("source_file", "unknown")
-            Console.echo(f"\n[{idx}] (相似度距离: {dist:.4f}) [来源: {src}]")
-            Console.echo(f"    {doc}...")
+            Console.info(f"\n[{idx}] (相似度距离: {dist:.4f}) [来源: {src}]")
+            Console.info(f"    {doc}...")
 
     def _resolve_scope_and_rag_dir(self) -> tuple[str, Path]:
         """解析当前作用域并返回对应 RAG 根目录。"""

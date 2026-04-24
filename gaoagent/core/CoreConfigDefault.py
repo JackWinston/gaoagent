@@ -56,7 +56,7 @@ class CoreConfigDefault:
                 break
 
             if api_config["name"] in api_names:
-                Console.echo("API 配置名称重复，请重新输入")
+                Console.info("API 配置名称重复，请重新输入")
                 continue
 
             api_names.add(api_config["name"])
@@ -67,14 +67,14 @@ class CoreConfigDefault:
             }
             self._write_api_config(apis)
             new_api_count += 1
-            Console.echo(
+            Console.info(
                 f"API 配置已采集：name={api_config['name']}, base_url={api_config['base_url']}, models={list(api_config['models'].keys())}"
             )
 
-            if not click.confirm("继续添加一组 API 配置？", default=False):
+            if not Console.confirm("继续添加一组 API 配置？", default=False):
                 break
 
-        Console.echo(f"API 配置采集完成，本次新增 {new_api_count} 组")
+        Console.info(f"API 配置采集完成，本次新增 {new_api_count} 组")
 
         mcp_configs: dict[str, Any] = {}
         existing_mcp_payload = self._read_json(mcp_config_file)
@@ -90,16 +90,16 @@ class CoreConfigDefault:
 
             (mcp_name, mcp_body) = next(iter(mcp_config.items()))
             if mcp_name in mcp_configs:
-                Console.echo(f"MCP 配置已存在，将覆盖：{mcp_name}")
+                Console.info(f"MCP 配置已存在，将覆盖：{mcp_name}")
             mcp_configs[mcp_name] = mcp_body
             self._write_mcp_config(mcp_configs)
             new_mcp_count += 1
-            Console.echo(f"MCP 配置已采集：{mcp_name}")
+            Console.info(f"MCP 配置已采集：{mcp_name}")
 
-            if not click.confirm("继续添加一组 MCP 配置？", default=False):
+            if not Console.confirm("继续添加一组 MCP 配置？", default=False):
                 break
 
-        Console.echo(f"MCP 配置采集完成，本次新增 {new_mcp_count} 组")
+        Console.info(f"MCP 配置采集完成，本次新增 {new_mcp_count} 组")
 
         if mcp_configs:
             try:
@@ -116,22 +116,22 @@ class CoreConfigDefault:
                 )
                 write_mcp_tools_cache(cache_payload)
                 tool_count = len((cache_payload.get("exported_map") or {}).keys())
-                Console.echo(f"MCP 工具缓存已更新，共 {tool_count} 个工具")
+                Console.info(f"MCP 工具缓存已更新，共 {tool_count} 个工具")
             except Exception as e:
-                Console.echo(f"MCP 工具缓存更新失败：{e}")
+                Console.info(f"MCP 工具缓存更新失败：{e}")
 
         isInitSkills = self._import_skills_config()
 
         if isInitSkills:
             skills_dir = Path.home() / ".gaoagent" / "skills"
             (skills, invalid_skills) = self._load_skills_metadata(skills_dir)
-            Console.echo(f"Skills 配置采集完成，共 {len(skills)} 个")
+            Console.info(f"Skills 配置采集完成，共 {len(skills)} 个")
             for skill in skills:
-                Console.echo(f"- {skill['name']}: {skill['description']}")
+                Console.info(f"- {skill['name']}: {skill['description']}")
             if invalid_skills:
-                Console.echo(f"以下 SKILL.md 格式不正确，共 {len(invalid_skills)} 个")
+                Console.info(f"以下 SKILL.md 格式不正确，共 {len(invalid_skills)} 个")
                 for item in invalid_skills:
-                    Console.echo(f"- {item['path']}: {item['reason']}")
+                    Console.info(f"- {item['path']}: {item['reason']}")
 
         self._import_rag_config()
 
@@ -166,8 +166,8 @@ class CoreConfigDefault:
             try:
                 return json.loads(file_path.read_text(encoding="utf-8"))
             except Exception as e:
-                Console.echo(f"读取失败：{file_path}，{e}")
-                if click.confirm("忽略该文件并继续？", default=True):
+                Console.info(f"读取失败：{file_path}，{e}")
+                if Console.confirm("忽略该文件并继续？", default=True):
                     return None
 
     def _write_json(self, file_path: Path, payload: Any) -> None:
@@ -214,7 +214,7 @@ class CoreConfigDefault:
            - capabilities: 默认能力（vision/tools/reasoning）
            - aliases: 别名列表（用于命令行快捷选择）
         """
-        if click.confirm("是否跳过 API 配置？", default=False):
+        if Console.confirm("是否跳过 API 配置？", default=False):
             return None
 
         name = self._prompt_non_empty_str("请输入 API 配置名称")
@@ -227,18 +227,18 @@ class CoreConfigDefault:
         while True:
             model_id = self._prompt_non_empty_str("请输入模型名")
             if model_id in models:
-                Console.echo("模型名重复，请重新输入")
+                Console.info("模型名重复，请重新输入")
                 continue
 
             context_window = self._prompt_positive_int(
                 "请输入该模型 context window", default=8192, show_default=True
             )
 
-            vision = click.confirm("该模型是否支持图片（vision）？", default=False)
-            tools = click.confirm("该模型是否支持工具调用（tools）？", default=True)
-            reasoning = click.confirm("该模型是否支持推理（reasoning）？", default=False)
+            vision = Console.confirm("该模型是否支持图片（vision）？", default=False)
+            tools = Console.confirm("该模型是否支持工具调用（tools）？", default=True)
+            reasoning = Console.confirm("该模型是否支持推理（reasoning）？", default=False)
 
-            aliases_raw = click.prompt("请输入别名（逗号分隔，可留空）", type=str, default="", show_default=False).strip()
+            aliases_raw = Console.prompt("请输入别名（逗号分隔，可留空）", type=str, default="", show_default=False).strip()
             aliases = [a.strip() for a in aliases_raw.split(",") if a.strip()] if aliases_raw else []
 
             models[model_id] = {
@@ -248,7 +248,7 @@ class CoreConfigDefault:
                 "aliases": aliases,
             }
 
-            if not click.confirm("继续添加模型？", default=False):
+            if not Console.confirm("继续添加模型？", default=False):
                 break
 
         return {"name": name, "base_url": base_url, "api_key": api_key, "models": models}
@@ -273,25 +273,25 @@ class CoreConfigDefault:
         - SSE: {"type":"sse","url":"https://...","headers":{...}}
         - Streamable HTTP: {"type":"streamable_http","url":"https://...","headers":{...}}
         """
-        if click.confirm("是否跳过 MCP 配置？", default=False):
+        if Console.confirm("是否跳过 MCP 配置？", default=False):
             return None
 
         while True:
-            raw = click.prompt("请输入 MCP JSON对象", type=str).strip()
+            raw = Console.prompt("请输入 MCP JSON对象", type=str).strip()
             try:
                 value = json.loads(raw)
             except Exception:
-                Console.echo("格式错误：请输入合法的 JSON 对象")
+                Console.info("格式错误：请输入合法的 JSON 对象")
                 continue
 
             if not isinstance(value, dict):
-                Console.echo("格式错误：MCP 配置必须是 JSON 对象")
+                Console.info("格式错误：MCP 配置必须是 JSON 对象")
                 continue
 
             try:
                 self._validate_mcp_config(value)
             except Exception as e:
-                Console.echo(f"格式错误：{e}")
+                Console.info(f"格式错误：{e}")
                 continue
 
             return value
@@ -301,20 +301,20 @@ class CoreConfigDefault:
         引导用户输入技能相关配置。
         """
 
-        if click.confirm("是否跳过 Skills 配置？", default=False):
+        if Console.confirm("是否跳过 Skills 配置？", default=False):
             return False        
 
         skills_dir = Path.home() / ".gaoagent" / "skills"
         skills_dir.mkdir(parents=True, exist_ok=True)
 
-        Console.echo(f"请将Skills对应的md文件复制到 {skills_dir}")
-        return click.confirm("是否已经完成?", default=False)
+        Console.info(f"请将Skills对应的md文件复制到 {skills_dir}")
+        return Console.confirm("是否已经完成?", default=False)
 
     def _import_rag_config(self) -> bool :
         """
         引导用户输入 RAG 相关配置。
         """
-        if click.confirm("是否跳过 RAG 配置？", default=False):
+        if Console.confirm("是否跳过 RAG 配置？", default=False):
             return False
         return self.create_rag_knowledge_base()
 
@@ -338,7 +338,7 @@ class CoreConfigDefault:
         rag_dir = rag_root_dir if rag_root_dir is not None else (self._ensure_config_dir() / "rag")
         rag_dir.mkdir(parents=True, exist_ok=True)
 
-        if kb_name is None and (not click.confirm("是否创建知识库？", default=True)):
+        if kb_name is None and (not Console.confirm("是否创建知识库？", default=True)):
             return False
 
         selected_name = (kb_name or "").strip()
@@ -348,24 +348,24 @@ class CoreConfigDefault:
             kb_dir = rag_dir / selected_name
             if kb_dir.exists():
                 if not kb_dir.is_dir():
-                    Console.echo(f"同名路径已存在且不是目录，请更换名称：{kb_dir}")
+                    Console.info(f"同名路径已存在且不是目录，请更换名称：{kb_dir}")
                     if kb_name is not None:
                         return False
                     selected_name = ""
                     continue
                 backup_count = self._backup_existing_rag_artifacts(kb_dir)
                 if backup_count > 0:
-                    Console.echo(f"检测到已有数据库/索引，已完成备份（{backup_count} 项）：{kb_dir}")
+                    Console.info(f"检测到已有数据库/索引，已完成备份（{backup_count} 项）：{kb_dir}")
                 else:
-                    Console.echo(f"知识库目录已存在，将直接复用：{kb_dir}")
+                    Console.info(f"知识库目录已存在，将直接复用：{kb_dir}")
                 break
             kb_dir.mkdir(parents=True, exist_ok=False)
             break
 
-        Console.echo(f"请将需要入库的文件复制到目录：{kb_dir}")
-        copied = click.confirm("是否已经完成文件复制？", default=False)
+        Console.info(f"请将需要入库的文件复制到目录：{kb_dir}")
+        copied = Console.confirm("是否已经完成文件复制？", default=False)
         if not copied:
-            Console.echo("已取消创建知识库（未执行入库）")
+            Console.info("已取消创建知识库（未执行入库）")
             return False
         self._prompt_import_rag_api_after_copy(kb_name=selected_name, rag_dir=rag_dir)
 
@@ -378,12 +378,12 @@ class CoreConfigDefault:
             # 入库失败时仅清理本次生成的索引产物，保留用户源文件。
             self._remove_rag_artifacts(kb_dir)
             if reason:
-                Console.echo(f"知识库创建失败：{reason}")
+                Console.info(f"知识库创建失败：{reason}")
             else:
-                Console.echo("知识库创建失败")
+                Console.info("知识库创建失败")
             return False
 
-        Console.echo(f"知识库创建成功：{selected_name}")
+        Console.info(f"知识库创建成功：{selected_name}")
         return True
 
     def update_rag_knowledge_base(
@@ -403,13 +403,13 @@ class CoreConfigDefault:
         """
         selected_name = (kb_name or "").strip()
         if not selected_name:
-            Console.echo("知识库名称不能为空")
+            Console.info("知识库名称不能为空")
             return False
 
         rag_dir = rag_root_dir if rag_root_dir is not None else (self._ensure_config_dir() / "rag")
         kb_dir = rag_dir / selected_name
         if not kb_dir.exists() or not kb_dir.is_dir():
-            Console.echo(f"知识库不存在：{selected_name}")
+            Console.info(f"知识库不存在：{selected_name}")
             return False
 
         (ok, reason) = self._build_rag_vector_store(
@@ -419,9 +419,9 @@ class CoreConfigDefault:
             update_mode=True,
         )
         if not ok:
-            Console.echo(f"知识库更新失败：{reason}")
+            Console.info(f"知识库更新失败：{reason}")
             return False
-        Console.echo(f"知识库更新成功：{selected_name}")
+        Console.info(f"知识库更新成功：{selected_name}")
         return True
 
     def _backup_existing_rag_artifacts(self, kb_dir: Path) -> int:
@@ -484,7 +484,7 @@ class CoreConfigDefault:
                     last_err = e
                     break
             if last_err is not None:
-                Console.echo(f"清理索引产物失败（将跳过该项）：{p}，{last_err}")
+                Console.info(f"清理索引产物失败（将跳过该项）：{p}，{last_err}")
 
     def _build_rag_vector_store(
         self,
@@ -527,25 +527,25 @@ class CoreConfigDefault:
         - rag_dir: 输入参数，指定 RAG 目录路径。
 
         """
-        if not click.confirm("是否现在导入 RAG 远程 Embedding API 配置？", default=False):
+        if not Console.confirm("是否现在导入 RAG 远程 Embedding API 配置？", default=False):
             return
         kb_dir = rag_dir / kb_name
         store = RagApiConfigStore(kb_name=kb_name, kb_dir=kb_dir)
         try:
             config_file = store.config_file()
         except Exception as e:
-            Console.echo(f"导入 RAG API 配置失败：{e}")
+            Console.info(f"导入 RAG API 配置失败：{e}")
             return
 
         payload = store.load()
         remote_api = payload.get("remote_api")
         if isinstance(remote_api, dict) and remote_api:
-            should_overwrite = click.confirm(
+            should_overwrite = Console.confirm(
                 f"知识库 '{kb_name}' 已存在远程配置，是否覆盖？",
                 default=False,
             )
             if not should_overwrite:
-                Console.echo(f"已跳过导入：{kb_name}")
+                Console.info(f"已跳过导入：{kb_name}")
                 return
 
         base_url = self._prompt_non_empty_str("请输入远程 Base URL（OpenAI 兼容）").rstrip("/")
@@ -562,10 +562,10 @@ class CoreConfigDefault:
         try:
             store.save(payload)
         except Exception as e:
-            Console.echo(f"导入 RAG API 配置失败：{e}")
+            Console.info(f"导入 RAG API 配置失败：{e}")
             return
-        Console.echo(f"已导入知识库远程配置：{kb_name}")
-        Console.echo(f"配置文件：{config_file}")
+        Console.info(f"已导入知识库远程配置：{kb_name}")
+        Console.info(f"配置文件：{config_file}")
         
     def _load_skills_metadata(self, skills_dir: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
         """_load_skills_metadata 方法。
@@ -587,20 +587,20 @@ class CoreConfigDefault:
         获取非空字符串输入；为空则提示并重新输入。
         """
         while True:
-            value = click.prompt(text, type=str, hide_input=hide_input).strip()
+            value = Console.prompt(text, type=str, hide_input=hide_input).strip()
             if value:
                 return value
-            Console.echo("输入不能为空，请重新输入")
+            Console.info("输入不能为空，请重新输入")
 
     def _prompt_positive_int(self, text: str, *, default: int, show_default: bool = True) -> int:
         """
         获取正整数输入；非正整数则提示并重新输入。
         """
         while True:
-            value = click.prompt(text, type=int, default=default, show_default=show_default)
+            value = Console.prompt(text, type=int, default=default, show_default=show_default)
             if value > 0:
                 return value
-            Console.echo("请输入正整数")
+            Console.info("请输入正整数")
 
 
     def _validate_mcp_config(self, config: dict[str, Any]) -> None:

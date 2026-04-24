@@ -297,8 +297,8 @@ def default_tool_registry() -> ToolRegistry:
             typ = (
                 click.Choice(choices) if isinstance(choices, list) and choices else str
             )
-            Console.echo(prompt.strip())
-            answer = click.prompt("", default=default, type=typ, prompt_suffix="")
+            Console.interaction(prompt.strip())
+            answer = Console.prompt("", default=default, type=typ, prompt_suffix="")
             return str(answer)
         except Exception as e:
             return safe_json_dumps(

@@ -89,7 +89,7 @@ class CoreHandlers:
         后续扩展建议:
         - 可将此方法对齐 `task()` 的执行路径，复用 `TaskRunner` 或会话态 Runner。
         """
-        Console.echo(f"CoreHandlers.chat , new={new}, prompt={prompt}, api={api}, model={model}, context_size={context_size}")
+        Console.debug(f"CoreHandlers.chat , new={new}, prompt={prompt}, api={api}, model={model}, context_size={context_size}")
 
     def task(self,question:str,mode:str) -> None:
         """任务执行入口：将问题交给 TaskRunner 执行并输出结果。

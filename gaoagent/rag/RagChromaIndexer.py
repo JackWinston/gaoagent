@@ -100,7 +100,7 @@ class RagChromaIndexer:
             text = self._read_text(file_path)
             if not text:
                 # 无法读取或内容为空时跳过该文件，不中断整体流程。
-                Console.echo(f"无法读取或内容为空文件：{file_path}")
+                Console.warn(f"无法读取或内容为空文件：{file_path}")
                 continue
             try:
                 chunks.extend(
@@ -162,7 +162,7 @@ class RagChromaIndexer:
 
             total_chunks = len(chunks)
             total_batches = (total_chunks + self._config.batch_size - 1) // self._config.batch_size
-            Console.echo(f"[RAG] 开始写入向量：total={total_chunks}, batch_size={self._config.batch_size}, batches={total_batches}")
+            Console.debug(f"[RAG] 开始写入向量：total={total_chunks}, batch_size={self._config.batch_size}, batches={total_batches}")
             for i in range(0, len(chunks), self._config.batch_size):
                 # 分批 add，减少单次请求体积，避免大文档时内存/请求过大。
                 batch = chunks[i: i + self._config.batch_size]
@@ -185,7 +185,7 @@ class RagChromaIndexer:
                     )
                 done = min(i + len(batch), total_chunks)
                 progress = (done / total_chunks * 100.0) if total_chunks > 0 else 100.0
-                Console.echo(f"[RAG] 写入进度：done={done}/{total_chunks} ({progress:.2f}%)")
+                Console.debug(f"[RAG] 写入进度：done={done}/{total_chunks} ({progress:.2f}%)")
             final_chunk_count = int(collection.count())
         except Exception as e:
             # 尽快释放底层 sqlite 句柄，降低 Windows 清理索引目录时的占用概率。
@@ -233,7 +233,7 @@ class RagChromaIndexer:
         for file_path in source_files:
             text = self._read_text(file_path)
             if not text:
-                Console.echo(f"无法读取或内容为空文件：{file_path}")
+                Console.warn(f"无法读取或内容为空文件：{file_path}")
                 continue
             try:
                 chunks.extend(
@@ -300,7 +300,7 @@ class RagChromaIndexer:
             if new_chunks:
                 total_new = len(new_chunks)
                 total_batches = (total_new + batch_size - 1) // batch_size
-                Console.echo(f"[RAG] 增量写入向量：new={total_new}, batch_size={batch_size}, batches={total_batches}")
+                Console.debug(f"[RAG] 增量写入向量：new={total_new}, batch_size={batch_size}, batches={total_batches}")
                 for i in range(0, total_new, batch_size):
                     batch = new_chunks[i: i + batch_size]
                     ids = [str(item["id"]) for item in batch]
@@ -312,7 +312,7 @@ class RagChromaIndexer:
                     else:
                         collection.upsert(ids=ids, documents=docs, metadatas=metas)
             else:
-                Console.echo("[RAG] 未检测到新增 chunk，跳过向量增量写入。")
+                Console.debug("[RAG] 未检测到新增 chunk，跳过向量增量写入。")
 
             final_chunk_count = int(collection.count())
             bm25_sync_ok, bm25_reason = self._sync_bm25_index(

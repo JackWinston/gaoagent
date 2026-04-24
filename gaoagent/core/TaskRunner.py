@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import click
+from gaoagent.core.runner.Console import Console
 
 from gaoagent.core.runner.BaseRunner import RunnerConfig
 from gaoagent.core.runner.ReActRunner import ReActRunner
@@ -84,7 +84,7 @@ class TaskRunner:
 
         if result.success:
             if result.final_result:
-                click.echo(result.final_result)
+                Console.echo(result.final_result)
             return
 
-        click.echo(f"任务失败：{result.error or 'unknown error'}")
+        Console.echo(f"任务失败：{result.error or 'unknown error'}")

@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any
 
 import click
+from gaoagent.core.runner.Console import Console
 import json
 import shutil
 import datetime
@@ -57,12 +58,12 @@ class CoreInit:
         """
         global_dir = Path.home() / ".gaoagent"
         if not global_dir.exists():
-            click.echo(f"未检测到全局配置目录：{global_dir}")
-            click.echo("请先运行：gaoagent config")
+            Console.echo(f"未检测到全局配置目录：{global_dir}")
+            Console.echo("请先运行：gaoagent config")
             return None
         current_root = Path.cwd().resolve()
         if current_root == Path.home().resolve():
-            click.echo("禁止在 ~/ 目录执行 gaoagent init，请进入具体项目目录后重试")
+            Console.echo("禁止在 ~/ 目录执行 gaoagent init，请进入具体项目目录后重试")
             return None
 
         registry_file = self._project_registry_file(global_dir)
@@ -76,7 +77,7 @@ class CoreInit:
 
         apis = self._load_global_apis(config_default, global_api_file)
         if not apis:
-            click.echo("未加载到任何 API 配置，初始化失败")
+            Console.echo("未加载到任何 API 配置，初始化失败")
             return None
 
         project_dir = current_root / ".gaoagent"
@@ -85,13 +86,13 @@ class CoreInit:
         (default_api, default_model) = self._prompt_default_api_and_model(apis)
         project_api_file = project_dir / "gao_client_api_config.json"
         self._write_json(project_api_file, {"default_api": default_api, "default_model": default_model, "apis": apis})
-        click.echo(f"已写入项目 API 配置：{project_api_file}")
+        Console.echo(f"已写入项目 API 配置：{project_api_file}")
 
         project_mcp_file = project_dir / "gao_client_mcp_setting.json"
         mcp_configs = self._load_global_mcp_configs(config_default, global_mcp_file)
         selected_mcp = self._prompt_select_mcp(mcp_configs)
         self._write_json(project_mcp_file, {"mcpServers": selected_mcp})
-        click.echo(f"已写入项目 MCP 配置：{project_mcp_file}")
+        Console.echo(f"已写入项目 MCP 配置：{project_mcp_file}")
         project_mcp_cache_file = project_dir / "gao_client_mcp_tools_cache.json"
         if selected_mcp:
             try:
@@ -105,9 +106,9 @@ class CoreInit:
                 )
                 self._write_json(project_mcp_cache_file, cache_payload)
                 tool_count = len((cache_payload.get("exported_map") or {}).keys())
-                click.echo(f"已写入项目 MCP 工具缓存：{project_mcp_cache_file}（{tool_count} 个工具）")
+                Console.echo(f"已写入项目 MCP 工具缓存：{project_mcp_cache_file}（{tool_count} 个工具）")
             except Exception as e:
-                click.echo(f"项目 MCP 工具缓存生成失败：{e}")
+                Console.echo(f"项目 MCP 工具缓存生成失败：{e}")
 
         selected_skills = self._prompt_select_skills(config_default, global_skills_dir)
         if selected_skills:
@@ -118,9 +119,9 @@ class CoreInit:
                 dst = project_skills_dir / item["name"]
                 self._copy_dir(item["src_dir"], dst)
                 installed_count += 1
-            click.echo(f"已复制 Skills：{installed_count} 个 → {project_skills_dir}")
+            Console.echo(f"已复制 Skills：{installed_count} 个 → {project_skills_dir}")
         else:
-            click.echo("未选择任何 Skill（已跳过）")
+            Console.echo("未选择任何 Skill（已跳过）")
 
         selected_rag = self._prompt_select_rag(global_rag_dir)
         if selected_rag:
@@ -137,14 +138,14 @@ class CoreInit:
                     self._copy_dir(src_store_dir, dst_store_dir)
                     self._rewrite_index_meta_store_dir(kb_dir=dst, kb_name=kb_name)
                 imported_count += 1
-            click.echo(f"已复制 RAG 知识库：{imported_count} 个 → {project_rag_dir}")
+            Console.echo(f"已复制 RAG 知识库：{imported_count} 个 → {project_rag_dir}")
         else:
-            click.echo("未选择任何 RAG 知识库（已跳过）")
+            Console.echo("未选择任何 RAG 知识库（已跳过）")
 
         self._ensure_gitignore_contains(current_root, ".gaoagent/")
         self._register_project_root(registry_file, current_root)
 
-        click.echo("初始化完成")
+        Console.echo("初始化完成")
 
         # TODO: 创建搜索索引
         return None
@@ -169,9 +170,9 @@ class CoreInit:
             return apis
 
         if api_file.exists():
-            click.echo(f"全局 API 配置文件存在但内容为空：{api_file}")
+            Console.echo(f"全局 API 配置文件存在但内容为空：{api_file}")
 
-        click.echo("未找到可用的全局 API 配置，将进入采集流程")
+        Console.echo("未找到可用的全局 API 配置，将进入采集流程")
 
         api_names: set[str] = set()
         while True:
@@ -180,7 +181,7 @@ class CoreInit:
                 break
 
             if api_config["name"] in api_names:
-                click.echo("API 配置名称重复，请重新输入")
+                Console.echo("API 配置名称重复，请重新输入")
                 continue
 
             api_names.add(api_config["name"])
@@ -190,7 +191,7 @@ class CoreInit:
                 "models": api_config["models"],
             }
             config_default._write_api_config(apis)
-            click.echo(
+            Console.echo(
                 f"API 配置已采集：name={api_config['name']}, base_url={api_config['base_url']}, models={list(api_config['models'].keys())}"
             )
 
@@ -217,7 +218,7 @@ class CoreInit:
                 "请选择默认 API", type=click.Choice(api_names, case_sensitive=False), default=default_api, show_default=True
             )
         else:
-            click.echo(f"默认 API：{default_api}")
+            Console.echo(f"默认 API：{default_api}")
 
         models_raw = apis.get(default_api, {}).get("models", {})
         if not isinstance(models_raw, dict) or not models_raw:
@@ -233,7 +234,7 @@ class CoreInit:
                 show_default=True,
             )
         else:
-            click.echo(f"默认模型：{default_model}")
+            Console.echo(f"默认模型：{default_model}")
 
         return (default_api, default_model)
 
@@ -259,13 +260,13 @@ class CoreInit:
         - 仅包含用户选中项的 MCP 配置字典；跳过时返回空字典。
         """
         if not mcp_configs:
-            click.echo("未检测到任何全局 MCP 配置（将写入空配置）")
+            Console.echo("未检测到任何全局 MCP 配置（将写入空配置）")
             return {}
 
         names = sorted([str(x) for x in mcp_configs.keys()])
-        click.echo("已加载的 MCP 服务：")
+        Console.echo("已加载的 MCP 服务：")
         for i, name in enumerate(names, start=1):
-            click.echo(f"{i}. {name}")
+            Console.echo(f"{i}. {name}")
 
         selected = self._prompt_multi_select("请选择 MCP（输入序号或名称，逗号分隔；回车跳过；输入 all 选择全部）", names)
         if not selected:
@@ -285,23 +286,23 @@ class CoreInit:
         - `list[dict[str, Any]]`：每项包含 Skill 名称、描述、源目录等信息。
         """
         if not skills_dir.exists() or not skills_dir.is_dir():
-            click.echo(f"未检测到全局 Skills 目录：{skills_dir}（已跳过）")
+            Console.echo(f"未检测到全局 Skills 目录：{skills_dir}（已跳过）")
             return []
 
         (skills, invalid_skills) = config_default._load_skills_metadata(skills_dir)
         if invalid_skills:
-            click.echo(f"以下 SKILL.md 不符合规范，共 {len(invalid_skills)} 个：")
+            Console.echo(f"以下 SKILL.md 不符合规范，共 {len(invalid_skills)} 个：")
             for item in invalid_skills:
-                click.echo(f"- {item['path']}: {item['reason']}")
+                Console.echo(f"- {item['path']}: {item['reason']}")
 
         if not skills:
-            click.echo("未加载到任何 Skill（已跳过）")
+            Console.echo("未加载到任何 Skill（已跳过）")
             return []
 
         skills.sort(key=lambda x: x["name"])
-        click.echo("已加载的 Skills：")
+        Console.echo("已加载的 Skills：")
         for i, item in enumerate(skills, start=1):
-            click.echo(f"{i}. {item['name']}: {item['description']}")
+            Console.echo(f"{i}. {item['name']}: {item['description']}")
 
         names = [item["name"] for item in skills]
         selected_names = self._prompt_multi_select(
@@ -324,17 +325,17 @@ class CoreInit:
         - `list[str]`：选中的知识库名称列表。
         """
         if not rag_dir.exists() or not rag_dir.is_dir():
-            click.echo(f"未检测到全局 RAG 目录：{rag_dir}（已跳过）")
+            Console.echo(f"未检测到全局 RAG 目录：{rag_dir}（已跳过）")
             return []
 
         names = sorted([p.name for p in rag_dir.iterdir() if p.is_dir() and not is_internal_rag_store_dir_name(p.name)])
         if not names:
-            click.echo("未加载到任何全局 RAG 知识库（已跳过）")
+            Console.echo("未加载到任何全局 RAG 知识库（已跳过）")
             return []
 
-        click.echo("已加载的 RAG 知识库：")
+        Console.echo("已加载的 RAG 知识库：")
         for i, name in enumerate(names, start=1):
-            click.echo(f"{i}. {name}")
+            Console.echo(f"{i}. {name}")
 
         return self._prompt_multi_select(
             "请选择 RAG 知识库（输入序号或名称，逗号分隔；回车跳过；输入 all 选择全部）",
@@ -397,7 +398,7 @@ class CoreInit:
                     deduped.append(item)
                 return deduped
 
-            click.echo("输入不合法，请重新输入")
+            Console.echo("输入不合法，请重新输入")
 
     def _write_json(self, file_path: Path, payload: Any) -> None:
         """以“临时文件替换”方式原子写入 JSON 文件。
@@ -465,7 +466,7 @@ class CoreInit:
 
         suffix = "" if (not content) or content.endswith(("\n", "\r\n")) else "\n"
         gitignore.write_text(f"{content}{suffix}{entry}\n", encoding="utf-8")
-        click.echo("已将 .gaoagent 写入 .gitignore")
+        Console.echo("已将 .gaoagent 写入 .gitignore")
         return None
 
     def _project_registry_file(self, global_dir: Path) -> Path:

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import click
+from gaoagent.core.runner.Console import Console
 from gaoagent.core.runner.Utils import try_project_root_dir
 
 
@@ -32,13 +33,13 @@ class ApiHandlers:
         payload = self._load_api_payload(config_file)
         apis = payload["apis"]
         if not apis:
-            click.echo(f"未检测到{scope} API 配置：{config_file}")
+            Console.echo(f"未检测到{scope} API 配置：{config_file}")
             return
 
         default_api = payload.get("default_api")
         if not isinstance(default_api, str) or default_api not in apis:
             default_api = next(iter(apis.keys()))
-        click.echo(f"{scope} API 列表：")
+        Console.echo(f"{scope} API 列表：")
         for idx, name in enumerate(sorted(apis.keys()), start=1):
             body = apis.get(name)
             if not isinstance(body, dict):
@@ -47,10 +48,10 @@ class ApiHandlers:
             models = body.get("models")
             model_names = sorted(list(models.keys())) if isinstance(models, dict) else []
             is_default = "是" if name == default_api else "否"
-            click.echo(f"{idx}. name={name}")
-            click.echo(f"   url={base_url}")
-            click.echo(f"   models={model_names}")
-            click.echo(f"   default={is_default}")
+            Console.echo(f"{idx}. name={name}")
+            Console.echo(f"   url={base_url}")
+            Console.echo(f"   models={model_names}")
+            Console.echo(f"   default={is_default}")
 
     def add(self) -> None:
         """新增 API 配置。"""
@@ -60,7 +61,7 @@ class ApiHandlers:
 
         name = self._prompt_non_empty_str("请输入 API 配置名称")
         if name in apis:
-            click.echo(f"API 已存在：{name}")
+            Console.echo(f"API 已存在：{name}")
             return
 
         api_body = self._prompt_api_body(existing=None)
@@ -72,7 +73,7 @@ class ApiHandlers:
             payload["default_model"] = self._pick_first_model(api_body)
 
         self._write_api_payload(config_file, payload)
-        click.echo(f"已添加{scope} API：{name}")
+        Console.echo(f"已添加{scope} API：{name}")
 
         if scope == "项目":
             global_file = self._global_config_dir() / self._API_CONFIG_FILENAME
@@ -81,20 +82,20 @@ class ApiHandlers:
             global_payload["default_api"] = name
             global_payload["default_model"] = self._pick_first_model(api_body)
             self._write_api_payload(global_file, global_payload)
-            click.echo(f"已同步到全局配置并设为默认：{global_file}")
+            Console.echo(f"已同步到全局配置并设为默认：{global_file}")
 
     def remove(self, name: str) -> None:
         """删除指定 API 配置（按当前作用域）。"""
         target = (name or "").strip()
         if not target:
-            click.echo("请提供 name 参数")
+            Console.echo("请提供 name 参数")
             return
 
         (scope, config_file) = self._resolve_scope_and_config_path()
         payload = self._load_api_payload(config_file)
         apis = payload["apis"]
         if target not in apis:
-            click.echo(f"未找到 API：{target}")
+            Console.echo(f"未找到 API：{target}")
             return
 
         del apis[target]
@@ -108,13 +109,13 @@ class ApiHandlers:
             payload["default_model"] = self._pick_first_model(apis.get(fallback))
 
         self._write_api_payload(config_file, payload)
-        click.echo(f"已删除{scope} API：{target}")
+        Console.echo(f"已删除{scope} API：{target}")
 
     def edit(self, name: str) -> None:
         """编辑指定 API 配置（仅当前作用域）。"""
         target = (name or "").strip()
         if not target:
-            click.echo("请提供 name 参数")
+            Console.echo("请提供 name 参数")
             return
 
         (scope, config_file) = self._resolve_scope_and_config_path()
@@ -122,7 +123,7 @@ class ApiHandlers:
         apis = payload["apis"]
         old = apis.get(target)
         if not isinstance(old, dict):
-            click.echo(f"未找到 API：{target}")
+            Console.echo(f"未找到 API：{target}")
             return
 
         apis[target] = self._prompt_api_body(existing=old)
@@ -130,13 +131,13 @@ class ApiHandlers:
         if payload.get("default_api") == target:
             payload["default_model"] = self._pick_first_model(apis[target])
         self._write_api_payload(config_file, payload)
-        click.echo(f"已更新{scope} API：{target}")
+        Console.echo(f"已更新{scope} API：{target}")
 
     def default(self, name: str) -> None:
         """设置指定 API 为当前作用域默认 API。"""
         target = (name or "").strip()
         if not target:
-            click.echo("请提供 name 参数")
+            Console.echo("请提供 name 参数")
             return
 
         (scope, config_file) = self._resolve_scope_and_config_path()
@@ -144,13 +145,13 @@ class ApiHandlers:
         apis = payload["apis"]
         body = apis.get(target)
         if not isinstance(body, dict):
-            click.echo(f"未找到 API：{target}")
+            Console.echo(f"未找到 API：{target}")
             return
 
         payload["default_api"] = target
         payload["default_model"] = self._pick_first_model(body)
         self._write_api_payload(config_file, payload)
-        click.echo(f"已设置{scope}默认 API：{target}")
+        Console.echo(f"已设置{scope}默认 API：{target}")
 
     def _resolve_scope_and_config_path(self) -> tuple[str, Path]:
         """解析当前作用域和 API 配置文件路径。"""
@@ -206,7 +207,7 @@ class ApiHandlers:
 
         base_url = click.prompt("请输入 API Base URL", type=str, default=base_url_default, show_default=bool(base_url_default)).strip()
         while not base_url:
-            click.echo("Base URL 不能为空")
+            Console.echo("Base URL 不能为空")
             base_url = click.prompt("请输入 API Base URL", type=str).strip()
 
         api_key = click.prompt(
@@ -219,7 +220,7 @@ class ApiHandlers:
         if not api_key:
             api_key = api_key_default
         while not api_key:
-            click.echo("API Key 不能为空")
+            Console.echo("API Key 不能为空")
             api_key = click.prompt("请输入 API Key", type=str, hide_input=True).strip()
 
         if models_default and click.confirm("是否复用现有模型列表？", default=True):
@@ -239,7 +240,7 @@ class ApiHandlers:
         while True:
             model_id = self._prompt_non_empty_str("请输入模型名")
             if model_id in models:
-                click.echo("模型名重复，请重新输入")
+                Console.echo("模型名重复，请重新输入")
                 continue
             context_window = self._prompt_positive_int("请输入该模型 context window", default=8192)
             vision = click.confirm("该模型是否支持图片（vision）？", default=False)
@@ -272,7 +273,7 @@ class ApiHandlers:
             value = click.prompt(text, type=str).strip()
             if value:
                 return value
-            click.echo("输入不能为空，请重新输入")
+            Console.echo("输入不能为空，请重新输入")
 
     def _prompt_positive_int(self, text: str, *, default: int) -> int:
         """获取正整数输入。"""
@@ -280,4 +281,4 @@ class ApiHandlers:
             value = click.prompt(text, type=int, default=default, show_default=True)
             if value > 0:
                 return value
-            click.echo("请输入正整数")
+            Console.echo("请输入正整数")

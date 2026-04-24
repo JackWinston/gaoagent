@@ -6,6 +6,7 @@ import json
 import shutil
 import time
 import click
+from gaoagent.core.runner.Console import Console
 
 from gaoagent.mcp.MCPClientCompat import (
     MCPStdioClientSync,
@@ -55,7 +56,7 @@ class CoreConfigDefault:
                 break
 
             if api_config["name"] in api_names:
-                click.echo("API 配置名称重复，请重新输入")
+                Console.echo("API 配置名称重复，请重新输入")
                 continue
 
             api_names.add(api_config["name"])
@@ -66,14 +67,14 @@ class CoreConfigDefault:
             }
             self._write_api_config(apis)
             new_api_count += 1
-            click.echo(
+            Console.echo(
                 f"API 配置已采集：name={api_config['name']}, base_url={api_config['base_url']}, models={list(api_config['models'].keys())}"
             )
 
             if not click.confirm("继续添加一组 API 配置？", default=False):
                 break
 
-        click.echo(f"API 配置采集完成，本次新增 {new_api_count} 组")
+        Console.echo(f"API 配置采集完成，本次新增 {new_api_count} 组")
 
         mcp_configs: dict[str, Any] = {}
         existing_mcp_payload = self._read_json(mcp_config_file)
@@ -89,16 +90,16 @@ class CoreConfigDefault:
 
             (mcp_name, mcp_body) = next(iter(mcp_config.items()))
             if mcp_name in mcp_configs:
-                click.echo(f"MCP 配置已存在，将覆盖：{mcp_name}")
+                Console.echo(f"MCP 配置已存在，将覆盖：{mcp_name}")
             mcp_configs[mcp_name] = mcp_body
             self._write_mcp_config(mcp_configs)
             new_mcp_count += 1
-            click.echo(f"MCP 配置已采集：{mcp_name}")
+            Console.echo(f"MCP 配置已采集：{mcp_name}")
 
             if not click.confirm("继续添加一组 MCP 配置？", default=False):
                 break
 
-        click.echo(f"MCP 配置采集完成，本次新增 {new_mcp_count} 组")
+        Console.echo(f"MCP 配置采集完成，本次新增 {new_mcp_count} 组")
 
         if mcp_configs:
             try:
@@ -115,22 +116,22 @@ class CoreConfigDefault:
                 )
                 write_mcp_tools_cache(cache_payload)
                 tool_count = len((cache_payload.get("exported_map") or {}).keys())
-                click.echo(f"MCP 工具缓存已更新，共 {tool_count} 个工具")
+                Console.echo(f"MCP 工具缓存已更新，共 {tool_count} 个工具")
             except Exception as e:
-                click.echo(f"MCP 工具缓存更新失败：{e}")
+                Console.echo(f"MCP 工具缓存更新失败：{e}")
 
         isInitSkills = self._import_skills_config()
 
         if isInitSkills:
             skills_dir = Path.home() / ".gaoagent" / "skills"
             (skills, invalid_skills) = self._load_skills_metadata(skills_dir)
-            click.echo(f"Skills 配置采集完成，共 {len(skills)} 个")
+            Console.echo(f"Skills 配置采集完成，共 {len(skills)} 个")
             for skill in skills:
-                click.echo(f"- {skill['name']}: {skill['description']}")
+                Console.echo(f"- {skill['name']}: {skill['description']}")
             if invalid_skills:
-                click.echo(f"以下 SKILL.md 格式不正确，共 {len(invalid_skills)} 个")
+                Console.echo(f"以下 SKILL.md 格式不正确，共 {len(invalid_skills)} 个")
                 for item in invalid_skills:
-                    click.echo(f"- {item['path']}: {item['reason']}")
+                    Console.echo(f"- {item['path']}: {item['reason']}")
 
         self._import_rag_config()
 
@@ -165,7 +166,7 @@ class CoreConfigDefault:
             try:
                 return json.loads(file_path.read_text(encoding="utf-8"))
             except Exception as e:
-                click.echo(f"读取失败：{file_path}，{e}")
+                Console.echo(f"读取失败：{file_path}，{e}")
                 if click.confirm("忽略该文件并继续？", default=True):
                     return None
 
@@ -226,7 +227,7 @@ class CoreConfigDefault:
         while True:
             model_id = self._prompt_non_empty_str("请输入模型名")
             if model_id in models:
-                click.echo("模型名重复，请重新输入")
+                Console.echo("模型名重复，请重新输入")
                 continue
 
             context_window = self._prompt_positive_int(
@@ -280,17 +281,17 @@ class CoreConfigDefault:
             try:
                 value = json.loads(raw)
             except Exception:
-                click.echo("格式错误：请输入合法的 JSON 对象")
+                Console.echo("格式错误：请输入合法的 JSON 对象")
                 continue
 
             if not isinstance(value, dict):
-                click.echo("格式错误：MCP 配置必须是 JSON 对象")
+                Console.echo("格式错误：MCP 配置必须是 JSON 对象")
                 continue
 
             try:
                 self._validate_mcp_config(value)
             except Exception as e:
-                click.echo(f"格式错误：{e}")
+                Console.echo(f"格式错误：{e}")
                 continue
 
             return value
@@ -306,7 +307,7 @@ class CoreConfigDefault:
         skills_dir = Path.home() / ".gaoagent" / "skills"
         skills_dir.mkdir(parents=True, exist_ok=True)
 
-        click.echo(f"请将Skills对应的md文件复制到 {skills_dir}")
+        Console.echo(f"请将Skills对应的md文件复制到 {skills_dir}")
         return click.confirm("是否已经完成?", default=False)
 
     def _import_rag_config(self) -> bool :
@@ -347,24 +348,24 @@ class CoreConfigDefault:
             kb_dir = rag_dir / selected_name
             if kb_dir.exists():
                 if not kb_dir.is_dir():
-                    click.echo(f"同名路径已存在且不是目录，请更换名称：{kb_dir}")
+                    Console.echo(f"同名路径已存在且不是目录，请更换名称：{kb_dir}")
                     if kb_name is not None:
                         return False
                     selected_name = ""
                     continue
                 backup_count = self._backup_existing_rag_artifacts(kb_dir)
                 if backup_count > 0:
-                    click.echo(f"检测到已有数据库/索引，已完成备份（{backup_count} 项）：{kb_dir}")
+                    Console.echo(f"检测到已有数据库/索引，已完成备份（{backup_count} 项）：{kb_dir}")
                 else:
-                    click.echo(f"知识库目录已存在，将直接复用：{kb_dir}")
+                    Console.echo(f"知识库目录已存在，将直接复用：{kb_dir}")
                 break
             kb_dir.mkdir(parents=True, exist_ok=False)
             break
 
-        click.echo(f"请将需要入库的文件复制到目录：{kb_dir}")
+        Console.echo(f"请将需要入库的文件复制到目录：{kb_dir}")
         copied = click.confirm("是否已经完成文件复制？", default=False)
         if not copied:
-            click.echo("已取消创建知识库（未执行入库）")
+            Console.echo("已取消创建知识库（未执行入库）")
             return False
         self._prompt_import_rag_api_after_copy(kb_name=selected_name, rag_dir=rag_dir)
 
@@ -377,12 +378,12 @@ class CoreConfigDefault:
             # 入库失败时仅清理本次生成的索引产物，保留用户源文件。
             self._remove_rag_artifacts(kb_dir)
             if reason:
-                click.echo(f"知识库创建失败：{reason}")
+                Console.echo(f"知识库创建失败：{reason}")
             else:
-                click.echo("知识库创建失败")
+                Console.echo("知识库创建失败")
             return False
 
-        click.echo(f"知识库创建成功：{selected_name}")
+        Console.echo(f"知识库创建成功：{selected_name}")
         return True
 
     def update_rag_knowledge_base(
@@ -402,13 +403,13 @@ class CoreConfigDefault:
         """
         selected_name = (kb_name or "").strip()
         if not selected_name:
-            click.echo("知识库名称不能为空")
+            Console.echo("知识库名称不能为空")
             return False
 
         rag_dir = rag_root_dir if rag_root_dir is not None else (self._ensure_config_dir() / "rag")
         kb_dir = rag_dir / selected_name
         if not kb_dir.exists() or not kb_dir.is_dir():
-            click.echo(f"知识库不存在：{selected_name}")
+            Console.echo(f"知识库不存在：{selected_name}")
             return False
 
         (ok, reason) = self._build_rag_vector_store(
@@ -418,9 +419,9 @@ class CoreConfigDefault:
             update_mode=True,
         )
         if not ok:
-            click.echo(f"知识库更新失败：{reason}")
+            Console.echo(f"知识库更新失败：{reason}")
             return False
-        click.echo(f"知识库更新成功：{selected_name}")
+        Console.echo(f"知识库更新成功：{selected_name}")
         return True
 
     def _backup_existing_rag_artifacts(self, kb_dir: Path) -> int:
@@ -483,7 +484,7 @@ class CoreConfigDefault:
                     last_err = e
                     break
             if last_err is not None:
-                click.echo(f"清理索引产物失败（将跳过该项）：{p}，{last_err}")
+                Console.echo(f"清理索引产物失败（将跳过该项）：{p}，{last_err}")
 
     def _build_rag_vector_store(
         self,
@@ -533,7 +534,7 @@ class CoreConfigDefault:
         try:
             config_file = store.config_file()
         except Exception as e:
-            click.echo(f"导入 RAG API 配置失败：{e}")
+            Console.echo(f"导入 RAG API 配置失败：{e}")
             return
 
         payload = store.load()
@@ -544,7 +545,7 @@ class CoreConfigDefault:
                 default=False,
             )
             if not should_overwrite:
-                click.echo(f"已跳过导入：{kb_name}")
+                Console.echo(f"已跳过导入：{kb_name}")
                 return
 
         base_url = self._prompt_non_empty_str("请输入远程 Base URL（OpenAI 兼容）").rstrip("/")
@@ -561,10 +562,10 @@ class CoreConfigDefault:
         try:
             store.save(payload)
         except Exception as e:
-            click.echo(f"导入 RAG API 配置失败：{e}")
+            Console.echo(f"导入 RAG API 配置失败：{e}")
             return
-        click.echo(f"已导入知识库远程配置：{kb_name}")
-        click.echo(f"配置文件：{config_file}")
+        Console.echo(f"已导入知识库远程配置：{kb_name}")
+        Console.echo(f"配置文件：{config_file}")
         
     def _load_skills_metadata(self, skills_dir: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
         """_load_skills_metadata 方法。
@@ -589,7 +590,7 @@ class CoreConfigDefault:
             value = click.prompt(text, type=str, hide_input=hide_input).strip()
             if value:
                 return value
-            click.echo("输入不能为空，请重新输入")
+            Console.echo("输入不能为空，请重新输入")
 
     def _prompt_positive_int(self, text: str, *, default: int, show_default: bool = True) -> int:
         """
@@ -599,7 +600,7 @@ class CoreConfigDefault:
             value = click.prompt(text, type=int, default=default, show_default=show_default)
             if value > 0:
                 return value
-            click.echo("请输入正整数")
+            Console.echo("请输入正整数")
 
 
     def _validate_mcp_config(self, config: dict[str, Any]) -> None:

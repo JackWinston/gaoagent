@@ -7,6 +7,7 @@ import subprocess
 from typing import Any, Callable
 
 import click
+from gaoagent.core.runner.Console import Console
 
 from gaoagent.core.runner.Utils import safe_json_dumps, try_project_root_dir
 
@@ -296,7 +297,7 @@ def default_tool_registry() -> ToolRegistry:
             typ = (
                 click.Choice(choices) if isinstance(choices, list) and choices else str
             )
-            click.echo(prompt.strip())
+            Console.echo(prompt.strip())
             answer = click.prompt("", default=default, type=typ, prompt_suffix="")
             return str(answer)
         except Exception as e:

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import click
+from gaoagent.core.runner.Console import Console
 
 from gaoagent.core.runner.Utils import scan_skills_metadata
 
@@ -31,19 +32,19 @@ class SkillsHandlers:
         """列出当前作用域（项目或全局）下的 Skill 列表。"""
         (scope, skills_dir) = self._resolve_scope_and_paths()
         if not skills_dir.exists() or not skills_dir.is_dir():
-            click.echo(f"未检测到{scope} Skills 目录：{skills_dir}")
+            Console.echo(f"未检测到{scope} Skills 目录：{skills_dir}")
             return
 
         skills = self._get_skills_in_dir(skills_dir)
         
         if not skills:
-            click.echo(f"{scope} 目录下无可用 Skill")
+            Console.echo(f"{scope} 目录下无可用 Skill")
             return
 
-        click.echo(f"{scope} Skills 列表：")
+        Console.echo(f"{scope} Skills 列表：")
         for idx, skill in enumerate(skills, start=1):
             name = skill["name"]
-            click.echo(f"{idx}. {name} - {skill.get('description', '')}")
+            Console.echo(f"{idx}. {name} - {skill.get('description', '')}")
 
     def install(self, name: str | None = None) -> None:
         """从全局 Skill 仓库安装 Skill 到当前项目。
@@ -59,25 +60,25 @@ class SkillsHandlers:
         """
         global_dir = self._global_config_dir() / "skills"
         if not global_dir.exists() or not global_dir.is_dir():
-            click.echo(f"未检测到全局 Skills 目录：{global_dir}")
+            Console.echo(f"未检测到全局 Skills 目录：{global_dir}")
             return
             
         project_root = self._detect_project_root()
         if not project_root:
-            click.echo("未检测到项目根目录（当前不在已初始化的 gaoagent 项目中），无法安装 Skill。")
+            Console.echo("未检测到项目根目录（当前不在已初始化的 gaoagent 项目中），无法安装 Skill。")
             return
             
         project_skills_dir = project_root / ".gaoagent" / "skills"
         global_skills = self._get_skills_in_dir(global_dir)
         
         if not global_skills:
-            click.echo("全局目录暂无可用 Skill，请先配置全局 Skill。")
+            Console.echo("全局目录暂无可用 Skill，请先配置全局 Skill。")
             return
             
         names = [s["name"] for s in global_skills]
-        click.echo("可安装的全局 Skills：")
+        Console.echo("可安装的全局 Skills：")
         for i, s in enumerate(global_skills, start=1):
-            click.echo(f"{i}. {s['name']} - {s.get('description', '')}")
+            Console.echo(f"{i}. {s['name']} - {s.get('description', '')}")
             
         if name and name in names:
             selected_names = [name]
@@ -96,13 +97,13 @@ class SkillsHandlers:
             src = Path(item["src_dir"])
             dst = project_skills_dir / skill_name
             if dst.exists():
-                click.echo(f"Skill '{skill_name}' 已存在，跳过。")
+                Console.echo(f"Skill '{skill_name}' 已存在，跳过。")
                 continue
             self._copy_dir(src, dst)
             installed_count += 1
             
         if installed_count > 0:
-            click.echo(f"成功安装 {installed_count} 个 Skill 到项目目录：{project_skills_dir}")
+            Console.echo(f"成功安装 {installed_count} 个 Skill 到项目目录：{project_skills_dir}")
 
     def uninstall(self, name: str | None = None) -> None:
         """卸载当前项目中的 Skill。
@@ -115,12 +116,12 @@ class SkillsHandlers:
         """
         (scope, skills_dir) = self._resolve_scope_and_paths()
         if scope == "全局":
-            click.echo("只能在项目中卸载 Skill。")
+            Console.echo("只能在项目中卸载 Skill。")
             return
             
         skills = self._get_skills_in_dir(skills_dir)
         if not skills:
-            click.echo(f"当前项目无已安装的 Skill。")
+            Console.echo(f"当前项目无已安装的 Skill。")
             return
             
         if name and any(s["name"] == name for s in skills):
@@ -142,7 +143,7 @@ class SkillsHandlers:
         if target_dir.exists():
             shutil.rmtree(target_dir)
 
-        click.echo(f"已卸载 Skill：{target}")
+        Console.echo(f"已卸载 Skill：{target}")
 
     def _resolve_scope_and_paths(self) -> tuple[str, Path]:
         """解析当前操作作用域并返回对应 Skills 目录路径。"""
@@ -223,9 +224,9 @@ class SkillsHandlers:
 
         (skills, invalid_skills) = scan_skills_metadata(skills_dir)
         if invalid_skills:
-            click.echo(f"发现不符合规范的 Skill 文件，共 {len(invalid_skills)} 个：")
+            Console.echo(f"发现不符合规范的 Skill 文件，共 {len(invalid_skills)} 个：")
             for item in invalid_skills:
-                click.echo(f"- {item['path']}: {item['reason']}")
+                Console.echo(f"- {item['path']}: {item['reason']}")
         return skills
 
     def _prompt_skill_name(self, skills: list[dict[str, Any]], *, action: str) -> str | None:
@@ -289,7 +290,7 @@ class SkillsHandlers:
                     deduped.append(item)
                 return deduped
 
-            click.echo("输入不合法，请重新输入")
+            Console.echo("输入不合法，请重新输入")
 
     def _copy_dir(self, src: Path, dst: Path) -> None:
         """目录覆盖复制：若目标已存在则先删除后复制。"""

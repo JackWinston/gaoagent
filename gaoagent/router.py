@@ -46,14 +46,16 @@ ROUTES: dict[str, Route] = {
     "mcp.test": Route(factory=MCPHandlers, method_name="test"),
 
     "skills.list": Route(factory=SkillsHandlers, method_name="list"),
-    "skills.install": Route(factory=SkillsHandlers, method_name="install"),
-    "skills.uninstall": Route(factory=SkillsHandlers, method_name="uninstall"),
+    "skills.add": Route(factory=SkillsHandlers, method_name="install"),
+    "skills.remove": Route(factory=SkillsHandlers, method_name="uninstall"),
 
     "rag.list": Route(factory=RagHandlers, method_name="list"),
     "rag.add": Route(factory=RagHandlers, method_name="add"),
     "rag.update": Route(factory=RagHandlers, method_name="update"),
     "rag.remove": Route(factory=RagHandlers, method_name="remove"),
     "rag.search": Route(factory=RagHandlers, method_name="search"),
+
+
     "api.list": Route(factory=ApiHandlers, method_name="list"),
     "api.add": Route(factory=ApiHandlers, method_name="add"),
     "api.remove": Route(factory=ApiHandlers, method_name="remove"),

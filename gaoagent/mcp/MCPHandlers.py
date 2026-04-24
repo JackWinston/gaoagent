@@ -9,6 +9,11 @@ import click
 
 from gaoagent.core.CoreConfigDefault import CoreConfigDefault
 from gaoagent.mcp.MCPClientCompat import MCPStdioClientSync
+from gaoagent.core.runner.Utils import (
+    try_project_root_dir,
+    global_config_dir,
+    project_config_dir,
+)
 
 
 class MCPHandlers:
@@ -27,7 +32,7 @@ class MCPHandlers:
     - 不负责 Runner 执行期路由，只负责配置管理与可用性检查。
     - 不实现 MCP 协议细节，连接/调用由 `MCPStdioClientSync` 负责。
     """
-    _PROJECTS_REGISTRY_FILENAME = "inited_projects.txt"
+
     _MCP_CONFIG_FILENAME = "gao_client_mcp_setting.json"
 
     def list(self) -> None:
@@ -49,7 +54,11 @@ class MCPHandlers:
             body = servers.get(name)
             status = self._status_of(body)
             server_type = body.get("type") if isinstance(body, dict) else None
-            suffix = f", type={server_type}" if isinstance(server_type, str) and server_type.strip() else ""
+            suffix = (
+                f", type={server_type}"
+                if isinstance(server_type, str) and server_type.strip()
+                else ""
+            )
             click.echo(f"{idx}. {name} [{status}{suffix}]")
 
     def add(self) -> None:
@@ -62,11 +71,11 @@ class MCPHandlers:
         """
         added = self._prompt_mcp_config()
         (name, body) = next(iter(added.items()))
-        project_root = self._detect_project_root()
-        global_file = self._global_config_dir() / self._MCP_CONFIG_FILENAME
+        project_config_root = project_config_dir()
+        global_file = global_config_dir() / self._MCP_CONFIG_FILENAME
 
-        if project_root is not None:
-            project_file = project_root / ".gaoagent" / self._MCP_CONFIG_FILENAME
+        if project_config_root is not None:
+            project_file = project_config_root / self._MCP_CONFIG_FILENAME
             self._upsert_mcp_server(global_file, name, body)
             self._upsert_mcp_server(project_file, name, body)
             click.echo(f"已添加 MCP：{name}")
@@ -134,16 +143,24 @@ class MCPHandlers:
             click.echo(f"MCP 配置无效：{target}")
             return
         if body.get("disabled") is True:
-            click.echo(f"提示：MCP `{target}` 当前状态为 disabled=true，仍将尝试连通性测试")
+            click.echo(
+                f"提示：MCP `{target}` 当前状态为 disabled=true，仍将尝试连通性测试"
+            )
 
         start = time.perf_counter()
         try:
-            tools = MCPStdioClientSync.from_config(server_name=target, config=body).list_tools()
+            tools = MCPStdioClientSync.from_config(
+                server_name=target, config=body
+            ).list_tools()
             duration_ms = int((time.perf_counter() - start) * 1000)
             click.echo(f"测试通过：{target}（{duration_ms} ms）")
             click.echo(f"可用工具数：{len(tools)}")
             if tools:
-                tool_names = [str(item.get('name')) for item in tools if isinstance(item, dict) and item.get("name")]
+                tool_names = [
+                    str(item.get("name"))
+                    for item in tools
+                    if isinstance(item, dict) and item.get("name")
+                ]
                 if tool_names:
                     click.echo(f"工具：{', '.join(tool_names)}")
         except Exception as e:
@@ -180,68 +197,10 @@ class MCPHandlers:
         返回:
         - `(scope, path)`，其中 `scope` 为“项目”或“全局”。
         """
-        project_root = self._detect_project_root()
-        if project_root is not None:
-            return ("项目", project_root / ".gaoagent" / self._MCP_CONFIG_FILENAME)
-        return ("全局", self._global_config_dir() / self._MCP_CONFIG_FILENAME)
-
-    def _global_config_dir(self) -> Path:
-        """返回全局配置目录（`~/.gaoagent`）。"""
-        return Path.home() / ".gaoagent"
-
-    def _project_registry_file(self) -> Path:
-        """返回已初始化项目注册表文件路径。"""
-        return self._global_config_dir() / self._PROJECTS_REGISTRY_FILENAME
-
-    def _detect_project_root(self) -> Path | None:
-        """
-        参考 Utils.project_root_dir() 的判定逻辑：
-        1) cwd 直接包含 `.gaoagent` 视为项目根；
-        2) 否则从全局已初始化项目清单中匹配最深父目录。
-        """
-        cwd = Path.cwd().resolve()
-        if (cwd / ".gaoagent").is_dir():
-            return cwd
-
-        candidates: list[Path] = []
-        for root in self._load_project_registry_paths():
-            config_dir = root / ".gaoagent"
-            if not (root.exists() and root.is_dir() and config_dir.exists() and config_dir.is_dir()):
-                continue
-            if root == cwd or root in cwd.parents:
-                candidates.append(root)
-
-        if not candidates:
-            return None
-        candidates.sort(key=lambda p: len(p.parts), reverse=True)
-        return candidates[0]
-
-    def _load_project_registry_paths(self) -> list[Path]:
-        """读取项目注册表并返回去重后的路径列表。"""
-        registry_file = self._project_registry_file()
-        if not registry_file.exists() or not registry_file.is_file():
-            return []
-        try:
-            lines = registry_file.read_text(encoding="utf-8").splitlines()
-        except Exception:
-            return []
-
-        roots: list[Path] = []
-        seen: set[str] = set()
-        for line in lines:
-            raw = line.strip()
-            if not raw:
-                continue
-            try:
-                root = Path(raw).expanduser().resolve()
-            except Exception:
-                continue
-            key = str(root)
-            if key in seen:
-                continue
-            seen.add(key)
-            roots.append(root)
-        return roots
+        project_config_root = project_config_dir()
+        if project_config_root is not None:
+            return ("项目", project_config_root / self._MCP_CONFIG_FILENAME)
+        return ("全局", global_config_dir() / self._MCP_CONFIG_FILENAME)
 
     def _read_json_file(self, file_path: Path) -> Any | None:
         """读取 JSON 文件；不存在或解析失败时返回 `None`。"""
@@ -271,7 +230,9 @@ class MCPHandlers:
         )
         tmp_file.replace(file_path)
 
-    def _upsert_mcp_server(self, file_path: Path, name: str, body: dict[str, Any]) -> None:
+    def _upsert_mcp_server(
+        self, file_path: Path, name: str, body: dict[str, Any]
+    ) -> None:
         """插入或更新单个 MCP 服务配置。"""
         servers = self._load_mcp_servers(file_path)
         servers[name] = body
@@ -310,7 +271,9 @@ class MCPHandlers:
             )
         return click.prompt(f"请输入要{action}的 MCP 名称", type=str).strip()
 
-    def _resolve_target_name(self, servers: dict[str, Any], *, action: str, name: str | None) -> str | None:
+    def _resolve_target_name(
+        self, servers: dict[str, Any], *, action: str, name: str | None
+    ) -> str | None:
         """解析目标 MCP 名称（支持显式传参和交互选择两种路径）。"""
         if not isinstance(name, str) or not name.strip():
             return self._prompt_server_name(servers, action=action)

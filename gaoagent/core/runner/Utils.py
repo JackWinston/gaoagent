@@ -1,11 +1,23 @@
 from __future__ import annotations
 
+"""
+Runner 层通用工具模块。
+
+架构定位:
+- 为 `gaoagent.core.runner` 提供稳定、无副作用（或弱副作用）的基础能力，
+  包括时间与文本处理、异常规范化、项目配置定位、MCP/Skill/RAG 配置读取、
+  以及 LLM 响应协议归一化。
+
+设计意图:
+- 将跨 Handler/Runner 复用的“环境探测 + 配置访问 + 协议适配”逻辑集中维护，
+  避免在调用方散落重复实现，确保行为一致、便于演进。
+"""
+
 import json
 import time
 import traceback
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
-import click
 
 if TYPE_CHECKING:
     from gaoagent.core.runner.HttpClient import HttpResponse
@@ -17,7 +29,7 @@ _PROJECTS_REGISTRY_FILENAME = "inited_projects.txt"
 
 def now_ms() -> int:
     """now_ms 函数。
-    
+
     用途:
     - 获取当前时间戳（毫秒级）。
 
@@ -29,14 +41,14 @@ def now_ms() -> int:
 
 def truncate_text(s: str, limit: int) -> str:
     """truncate_text 函数。
-    
+
     用途:
     - 截断文本，确保不超过指定长度。
-    
+
     参数:
     - s: 输入参数，用于指定要截断的文本。
     - limit: 输入参数，用于指定截断后的文本长度上限。
-    
+
     返回:
     - str: 返回截断后的文本。
     """
@@ -47,13 +59,13 @@ def truncate_text(s: str, limit: int) -> str:
 
 def safe_json_dumps(value: Any) -> str:
     """safe_json_dumps 函数。
-    
+
     用途:
     - 安全地将任意Python对象转换为JSON字符串。
-    
+
     参数:
     - value: 输入参数，用于指定要转换的Python对象。
-    
+
     返回:
     - str: 返回转换后的JSON字符串。
     """
@@ -65,14 +77,14 @@ def safe_json_dumps(value: Any) -> str:
 
 def summarize(value: Any, limit: int = 400) -> str:
     """summarize 函数。
-    
+
     用途:
     - 对任意值进行总结，确保不超过指定长度。
-    
+
     参数:
     - value: 输入参数，用于指定要总结的值。
     - limit: 输入参数，用于指定总结后的文本长度上限。
-    
+
     返回:
     - str: 返回总结后的文本。
     """
@@ -84,16 +96,20 @@ def summarize(value: Any, limit: int = 400) -> str:
 
 
 def redact(value: Any) -> Any:
-    """redact 函数。
-    
-    用途:
-    - 对敏感信息进行隐藏，确保在日志记录等场景中不泄露敏感数据。
-    
+    """
+    递归脱敏敏感字段，适用于日志与调试输出。
+
+    脱敏策略:
+    - 当输入为 `dict` 时，若 key 命中敏感词（如 `api_key/token/password`），
+      对应 value 统一替换为 `"***"`。
+    - `list` 会递归处理其元素。
+    - 其他类型原样返回。
+
     参数:
-    - value: 输入参数，用于控制该函数的处理行为。
-    
+    - value: 任意待处理对象。
+
     返回:
-    - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+    - Any: 结构保持不变的脱敏结果。
     """
     sensitive_keys = {
         "api_key",
@@ -119,13 +135,13 @@ def redact(value: Any) -> Any:
 
 def normalize_exception(e: BaseException) -> dict[str, Any]:
     """normalize_exception 函数。
-    
+
     用途:
     - 对异常进行标准化处理，提取异常类型、消息和栈轨迹。
-    
+
     参数:
     - e: 输入参数，用于控制该函数的处理行为。
-    
+
     返回:
     - dict[str, Any]: 返回标准化后的异常信息，包含异常类型、异常消息和异常栈轨迹。
     """
@@ -136,40 +152,28 @@ def normalize_exception(e: BaseException) -> dict[str, Any]:
     }
 
 
-def __global_config_dir() -> Path:
-    """__global_config_dir 函数。
-    
+def global_config_dir() -> Path:
+    """global_config_dir 函数。
+
     用途:
     - 获取全局配置目录的路径。
-    
+
     返回:
     - Path: 返回全局配置目录的路径。
     """
     return Path.home() / ".gaoagent"
 
 
-def _project_registry_file() -> Path:
-    """_project_registry_file 函数。
-    
-    用途:
-    - 获取项目注册文件的路径。
-    
-    返回:
-    - Path: 返回项目注册文件的路径。
-    """
-    return __global_config_dir() / _PROJECTS_REGISTRY_FILENAME
+def load_project_registry_paths() -> list[Path]:
+    """load_project_registry_paths 函数。
 
-
-def _load_project_registry_paths() -> list[Path]:
-    """_load_project_registry_paths 函数。
-    
     用途:
     - 加载项目注册文件中的项目路径。
-    
+
     返回:
     - list[Path]: 返回项目注册文件中记录的项目路径列表。
     """
-    registry_file = _project_registry_file()
+    registry_file = global_config_dir() / _PROJECTS_REGISTRY_FILENAME
     if not registry_file.exists() or not registry_file.is_file():
         return []
     try:
@@ -195,38 +199,29 @@ def _load_project_registry_paths() -> list[Path]:
     return roots
 
 
-def project_root_dir() -> Path:
-    """返回项目根目录（其下需存在 `.gaoagent`）。"""
-    cwd = Path.cwd().resolve()
-    config_dir = cwd / ".gaoagent"
-    if config_dir.exists() and config_dir.is_dir():
-        return cwd
-
-    candidates: list[Path] = []
-    for root in _load_project_registry_paths():
-        config = root / ".gaoagent"
-        if not (root.exists() and root.is_dir() and config.exists() and config.is_dir()):
-            continue
-        if root == cwd or root in cwd.parents:
-            candidates.append(root)
-    if candidates:
-        candidates.sort(key=lambda p: len(p.parts), reverse=True)
-        return candidates[0]
-
-    click.echo("请先执行 gaoagent init 命令初始化项目")
-    raise RuntimeError(f"未检测到项目配置目录：{cwd / '.gaoagent'}")
-
 def try_project_root_dir() -> Path | None:
-    """尝试返回项目根目录；未命中时返回 `None`，不输出提示。"""
+    """
+     返回当前执行上下文对应的项目根目录（目录下需存在 `.gaoagent`）。
+
+    解析顺序:
+    - 优先使用当前工作目录；
+    - 若当前目录不是项目根，则在注册表中查找能覆盖当前路径的已初始化项目，
+      并选择“最深匹配”目录（最长路径前缀）。
+
+    失败行为:
+    - 向终端输出初始化提示并抛出 `RuntimeError`。
+    """
     cwd = Path.cwd().resolve()
     config_dir = cwd / ".gaoagent"
     if config_dir.exists() and config_dir.is_dir():
         return cwd
 
     candidates: list[Path] = []
-    for root in _load_project_registry_paths():
+    for root in load_project_registry_paths():
         config = root / ".gaoagent"
-        if not (root.exists() and root.is_dir() and config.exists() and config.is_dir()):
+        if not (
+            root.exists() and root.is_dir() and config.exists() and config.is_dir()
+        ):
             continue
         if root == cwd or root in cwd.parents:
             candidates.append(root)
@@ -235,31 +230,53 @@ def try_project_root_dir() -> Path | None:
         return candidates[0]
     return None
 
-def project_config_dir() -> Path:
-    """返回项目配置目录。"""
-    return project_root_dir() / ".gaoagent"
 
-
-def _find_config_file(name: str) -> Path:
-    """_find_config_file 函数。
-    
-    用途:
-    - 查找项目配置目录下的指定配置文件。
-    
-    参数:
-    - name: 输入参数，指定要查找的配置文件名。
-    
-    返回:
-    - Path: 返回配置文件的路径。    
+def project_config_dir() -> Path | None:
     """
-    return project_config_dir() / name
+    返回当前项目的配置目录路径（`<project_root>/.gaoagent`）。
+
+    该函数是 Runner/Handler 访问项目级配置文件的统一入口。
+    """
+    root = try_project_root_dir()
+    if root is None:
+        return None
+    return root / ".gaoagent"
+
+
+def _find_config_file(name: str) -> Path | None:
+    """
+    生成项目配置目录下的目标文件路径。
+
+    参数:
+    - name: 配置文件名或子路径（相对 `.gaoagent`）。
+
+    返回:
+    - Path: 目标配置文件的绝对路径对象（不保证文件存在）。
+    """
+    config_dir = project_config_dir()
+    if config_dir is None:
+        return None
+    return config_dir / name
+
 
 
 def load_request_base_info() -> RequestBaseInfo | None:
-    """加载请求基础信息, 包括 baseurl、api_key、默认 headers 等等"""
+    """
+    加载默认 LLM 请求基础信息。
+
+    配置来源:
+    - `.gaoagent/gao_client_api_config.json`
+
+    容错策略:
+    - `default_api` 缺失或非法时，回退到第一个可用 API；
+    - `default_model` 缺失或非法时，回退到该 API 的第一个可用模型；
+    - 配置结构不合法或缺失关键节点时返回 `None`。
+    """
     from gaoagent.core.runner.BaseRunner import RequestBaseInfo
 
     path = _find_config_file("gao_client_api_config.json")
+    if path is None:
+        return None
     if not path.exists():
         return None
     try:
@@ -304,58 +321,17 @@ def load_request_base_info() -> RequestBaseInfo | None:
     )
 
 
-def load_mcp() -> dict[str, Any]:
-    """
-    读取 MCP server 配置并输出给 Prompt 注入层使用。
-
-    返回值仅保留可用服务（disabled != true），并做最小字段裁剪，
-    避免把无关字段扩散到上层提示词。
-    """
-    path = _find_config_file("gao_client_mcp_setting.json")
-    if not path.exists():
-        return {"available": False, "servers": []}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {"available": False, "servers": []}
-
-    if not isinstance(payload, dict):
-        return {"available": False, "servers": []}
-
-    servers_payload = payload.get("mcpServers")
-    if not isinstance(servers_payload, dict):
-        return {"available": False, "servers": []}
-
-    servers: list[dict[str, Any]] = []
-    for name, body in servers_payload.items():
-        if not isinstance(name, str) or not isinstance(body, dict):
-            continue
-        if body.get("disabled") is True:
-            continue
-        servers.append(
-            {
-                "name": name,
-                "timeout": body.get("timeout"),
-                "type": body.get("type"),
-                "command": body.get("command"),
-                "args": body.get("args"),
-                "url": body.get("url"),
-                "headers": body.get("headers"),
-            }
-        )
-    servers.sort(key=lambda x: x.get("name") or "")
-    return {"available": True, "servers": servers}
-
-
 def load_mcp_servers_raw() -> dict[str, Any]:
     """
     读取原始 MCP servers 配置（不裁剪字段）。
 
     用途：
     - ReActRunner 在真正调用 MCP 工具时，需要拿到完整 `command/args/timeout`。
-    - 与 `load_mcp()` 不同，本函数面向运行时执行，不面向提示词展示。
+ 
     """
     path = _find_config_file("gao_client_mcp_setting.json")
+    if path is None:
+        return {}
     if not path.exists():
         return {}
     try:
@@ -377,6 +353,8 @@ def load_mcp_tools_cache() -> dict[str, Any] | None:
     - `exported_map`: 导出工具名 -> (server/tool/schema) 映射
     """
     path = _find_config_file("gao_client_mcp_tools_cache.json")
+    if path is None:
+        return None
     if not path.exists():
         return None
     try:
@@ -394,6 +372,8 @@ def write_mcp_tools_cache_for_current_scope(payload: dict[str, Any]) -> None:
     - 缓存统一写入项目级 `.gaoagent/` 目录。
     """
     cfg_dir = project_config_dir()
+    if cfg_dir is None:
+        return
     cfg_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cfg_dir / "gao_client_mcp_tools_cache.json"
     tmp_path = cache_path.with_name(f"{cache_path.name}.tmp")
@@ -404,11 +384,20 @@ def write_mcp_tools_cache_for_current_scope(payload: dict[str, Any]) -> None:
     tmp_path.replace(cache_path)
 
 
-def load_skills() -> dict[str, Any]:
-    """加载技能库配置"""
-    skills_dir = _find_config_file("skills").resolve()
+def load_skills() -> dict[str, Any] | None:
+    """
+    加载技能元数据索引（用于提示词注入与能力展示）。
+
+    返回结构:
+    - `available`: 是否检测到技能目录；
+    - `items`: 技能列表（仅保留 name/description/path）。
+    """
+    skills_cfg = _find_config_file("skills")
+    if skills_cfg is None:
+        return None
+    skills_dir = skills_cfg.resolve()
     if not skills_dir.exists() or not skills_dir.is_dir():
-        return {"available": False, "items": []}
+        return None
 
     (skills, _) = scan_skills_metadata(skills_dir)
     items: list[dict[str, Any]] = []
@@ -429,7 +418,9 @@ def parse_skill_frontmatter(file_path: Path) -> dict[str, Any] | None:
     return meta
 
 
-def parse_skill_frontmatter_with_reason(file_path: Path) -> tuple[dict[str, Any] | None, str | None]:
+def parse_skill_frontmatter_with_reason(
+    file_path: Path,
+) -> tuple[dict[str, Any] | None, str | None]:
     """解析 Skill.md frontmatter，失败时返回原因。"""
     try:
         content = file_path.read_text(encoding="utf-8")
@@ -495,7 +486,9 @@ def parse_skill_frontmatter_with_reason(file_path: Path) -> tuple[dict[str, Any]
     return ({"name": name, "description": description}, None)
 
 
-def scan_skills_metadata(skills_dir: Path) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+def scan_skills_metadata(
+    skills_dir: Path,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     """
     扫描 skills 目录并做统一解析（尽力加载，不做规范性校验）：
     - 若 frontmatter 可解析，使用其 name/description；
@@ -514,26 +507,36 @@ def scan_skills_metadata(skills_dir: Path) -> tuple[list[dict[str, Any]], list[d
             # 尽力加载：解析失败时不拦截，仍提供可用的最小元数据。
             meta = {"name": file_path.parent.name, "description": ""}
             invalid_skills.append(
-                {"path": str(file_path), "reason": reason or "解析失败"})
+                {"path": str(file_path), "reason": reason or "解析失败"}
+            )
         else:
             skills.append(
-            {
-                "name": str(meta["name"]),
-                "description": str(meta["description"]),
-                "path": str(file_path),
-                "src_dir": file_path.parent,
-            }
-        )
+                {
+                    "name": str(meta["name"]),
+                    "description": str(meta["description"]),
+                    "path": str(file_path),
+                    "src_dir": file_path.parent,
+                }
+            )
 
     skills.sort(key=lambda x: str(x.get("name") or ""))
     return (skills, invalid_skills)
 
 
-def load_rag() -> dict[str, Any]:
-    """加载RAG索引配置"""
-    rag_dir = _find_config_file("rag").resolve()
+def load_rag() -> dict[str, Any] | None:
+    """
+    加载项目级 RAG 索引目录概览。
+
+    返回结构:
+    - `available`: 是否检测到 `rag` 目录；
+    - `indexes`: 当前可见索引子目录名列表（已排序）。
+    """
+    rag_cfg = _find_config_file("rag")
+    if rag_cfg is None:
+        return None
+    rag_dir = rag_cfg.resolve()
     if not rag_dir.exists() or not rag_dir.is_dir():
-        return {"available": False, "indexes": []}
+        return None
 
     indexes = sorted([p.name for p in rag_dir.iterdir() if p.is_dir()])
     return {"available": True, "indexes": indexes}
@@ -575,9 +578,15 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
 
     # HTTP 层失败（非 2xx 或网络异常）直接终止当前步，并返回可诊断信息。
     if not response.ok:
-        status_text = f"status={response.status}" if response.status is not None else "status=null"
+        status_text = (
+            f"status={response.status}"
+            if response.status is not None
+            else "status=null"
+        )
         reason_text = response.reason or "unknown"
-        body = response.text or (safe_json_dumps(response.json) if response.json is not None else "")
+        body = response.text or (
+            safe_json_dumps(response.json) if response.json is not None else ""
+        )
         content = f"LLM 请求失败：{status_text}, reason={reason_text}"
         if body:
             # 错误体可能很长，避免污染终端与日志。
@@ -596,7 +605,9 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
         )
 
     # 优先使用已解析 JSON；若缺失则尝试从 text 二次反序列化。
-    payload: dict[str, Any] | None = response.json if isinstance(response.json, dict) else None
+    payload: dict[str, Any] | None = (
+        response.json if isinstance(response.json, dict) else None
+    )
     if payload is None and isinstance(response.text, str) and response.text.strip():
         try:
             parsed = json.loads(response.text)
@@ -609,11 +620,15 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
         text = response.text or ""
         return StepResult(
             decision="retry",
-            content=truncate_text(text, 800) if text else "LLM 返回为空或不是 JSON 对象",
+            content=(
+                truncate_text(text, 800) if text else "LLM 返回为空或不是 JSON 对象"
+            ),
             raw={"http": {"ok": True, "status": response.status}, "text": text},
         )
 
-    from gaoagent.core.runner.FunctionCallProtocol import map_chat_completion_to_protocol
+    from gaoagent.core.runner.FunctionCallProtocol import (
+        map_chat_completion_to_protocol,
+    )
 
     # 统一协议映射：把 ChatCompletions payload 转成内部 protocol dict。
     protocol = map_chat_completion_to_protocol(payload)

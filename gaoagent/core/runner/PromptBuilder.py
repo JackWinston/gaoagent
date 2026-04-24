@@ -3,9 +3,8 @@ from __future__ import annotations
 import time
 import os
 import platform
-from typing import Any
 from gaoagent.core.runner.BaseRunner import Mode
-from gaoagent.core.runner.Utils import load_skills, project_root_dir
+from gaoagent.core.runner.Utils import load_skills, try_project_root_dir
 
 
 def build_system_prompt(tool_names: list[str], mode: Mode) -> str:
@@ -23,25 +22,30 @@ def build_system_prompt(tool_names: list[str], mode: Mode) -> str:
         return build_react_system_text(tool_names=tool_names)
 
 
-def build_react_system_text( *, tool_names: list[str] | None) -> str:
+def build_react_system_text(*, tool_names: list[str] | None) -> str:
     """build_react_system_text 函数。
-    
+
     用途:
     - 构建 ReAct 模式的系统提示词。
-    
+
     参数:
     - tool_names: 工具名称列表.
-    
+
     返回:
     - str: 系统提示词.
     """
     available_tools = tool_names or []
 
     from gaoagent.core.runner.Utils import load_rag
+
     rag_info = load_rag()
-    kb_list = rag_info.get("indexes", [])
-    kb_str = ", ".join(kb_list)
-    rag_section = (
+    rag_section : str = ""
+    if rag_info is None:
+        rag_section =  ""
+    else :
+        kb_list = rag_info.get("indexes", [])
+        kb_str = ", ".join(kb_list)
+        rag_section = (
         f"""
 【RAG 检索与引用规则】
 当前可用 RAG 知识库：{kb_str}
@@ -52,8 +56,12 @@ def build_react_system_text( *, tool_names: list[str] | None) -> str:
         else ""
     )
 
-    skill_str = _getSkillStr().strip()
-    skill_section = (
+    skill_str = _getSkillStr()
+    skill_section : str = ""
+    if skill_str is None:
+        skill_section = ""
+    else :
+        skill_section = (
         f"""
 【Skill 使用规则】
 当且仅当用户任务与某个 Skill 高度相关时，才按需读取对应的 SKILL.md 正文。
@@ -115,42 +123,29 @@ Python Version : {platform.python_version()}
 当前时间 : {time.strftime("%Y-%m-%d %H:%M:%S %Z", time.localtime())}
 
 【当前项目目录】
-{_resolve_project_root_for_prompt()}
+{ try_project_root_dir() or os.getcwd()}
 
 """
     return base_prompt
 
 
-def _resolve_project_root_for_prompt() -> str:
-    """_resolve_project_root_for_prompt 函数。
-    
-    用途:
-    - 解析当前项目的根目录，用于在系统提示词中引用项目路径。
-    
-    返回:
-    - str: 项目根目录路径.
-    """
-    try:
-        return str(project_root_dir())
-    except Exception:
-        return str(os.getcwd())
-
-
-def _getSkillStr() -> str:
+def _getSkillStr() -> str | None:
     """_getSkillStr 函数。
-    
+
     用途:
     - 构建 Skill 索引字符串，用于在系统提示词中引用。
-    
+
     返回:
     - str: Skill 索引字符串.
     """
     raw_skills = load_skills()
+    if raw_skills is None:
+        return None
     if not isinstance(raw_skills, dict):
-        return ""
+        return None
     items = raw_skills.get("items")
     if not isinstance(items, list):
-        return ""
+        return None
     result: list[str] = []
     index = 1
     for item in items:

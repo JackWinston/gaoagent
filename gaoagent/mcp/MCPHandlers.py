@@ -47,7 +47,7 @@ class MCPHandlers:
         (scope, config_file) = self._resolve_scope_and_config_path()
         servers = self._load_mcp_servers(config_file)
         if not servers:
-            Console.info(f"未检测到{scope} MCP 服务：{config_file}")
+            Console.warn(f"未检测到{scope} MCP 服务. 请先调用 `gaoagent mcp add` 添加服务.")
             return
 
         Console.info(f"{scope} MCP 服务列表：")

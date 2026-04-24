@@ -7,8 +7,9 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
+from gaoagent.core.runner.Console import Console
 from gaoagent.core.runner.RunLogger import get_current_run_logger
-from gaoagent.core.runner.Utils import redact, safe_json_dumps
+from gaoagent.core.runner.Utils import redact, safe_json_dumps, summarize
 
 
 @dataclass(frozen=True)
@@ -119,6 +120,19 @@ class OpenAICompatibleHttpClient:
             headers["Authorization"] = f"Bearer {self._api_key}"
 
         req = urllib.request.Request(url=url, data=body_bytes, headers=headers, method="POST")
+        Console.debug(
+            safe_json_dumps(
+                {
+                    "event": "llm_http_request",
+                    "step": step,
+                    "url": url,
+                    "model": model,
+                    "message_count": len(messages) if isinstance(messages, list) else 0,
+                    "tool_count": len(tools) if isinstance(tools, list) else 0,
+                    "stream": True,
+                }
+            )
+        )
 
         run_logger = get_current_run_logger()
         if run_logger is not None:
@@ -137,6 +151,16 @@ class OpenAICompatibleHttpClient:
             with urllib.request.urlopen(req, timeout=self._timeout_s) as resp:
                 status = getattr(resp, "status", None) or resp.getcode()
                 content_type = resp.headers.get("Content-Type") or ""
+                Console.debug(
+                    safe_json_dumps(
+                        {
+                            "event": "llm_http_response_head",
+                            "step": step,
+                            "status": int(status) if isinstance(status, int) else status,
+                            "content_type": content_type,
+                        }
+                    )
+                )
 
                 if "text/event-stream" in content_type.lower():
                     message: dict[str, Any] = {"role": "assistant"}
@@ -260,6 +284,18 @@ class OpenAICompatibleHttpClient:
                             },
                             step=step,
                         )
+                    Console.debug(
+                        safe_json_dumps(
+                            {
+                                "event": "llm_http_response_summary",
+                                "step": step,
+                                "status": int(status) if isinstance(status, int) else None,
+                                "finish_reason": finish_reason,
+                                "has_tool_calls": bool(tool_call_map),
+                                "content_preview": summarize(content_text, 240),
+                            }
+                        )
+                    )
                     return HttpResponse(
                         ok=True,
                         status=int(status) if isinstance(status, int) else None,
@@ -285,6 +321,17 @@ class OpenAICompatibleHttpClient:
                         },
                         step=step,
                     )
+                Console.debug(
+                    safe_json_dumps(
+                        {
+                            "event": "llm_http_response_summary",
+                            "step": step,
+                            "status": int(status) if isinstance(status, int) else None,
+                            "json_parsed": isinstance(parsed, dict),
+                            "body_preview": summarize(parsed if isinstance(parsed, dict) else text, 240),
+                        }
+                    )
+                )
                 return HttpResponse(
                     ok=True,
                     status=int(status) if isinstance(status, int) else None,
@@ -313,10 +360,25 @@ class OpenAICompatibleHttpClient:
                     },
                     step=step,
                 )
+            reason = getattr(e, "reason", None) or str(e)
+            Console.debug(
+                safe_json_dumps(
+                    {
+                        "event": "llm_http_error",
+                        "step": step,
+                        "status": int(getattr(e, "code", 0)) if getattr(e, "code", None) is not None else None,
+                        "reason": str(reason),
+                        "body_preview": summarize(parsed if isinstance(parsed, dict) else text, 300),
+                    }
+                )
+            )
+            Console.fatal(
+                f"请求模型接口时出错了：HTTP {getattr(e, 'code', 'unknown')}，原因：{reason}"
+            )
             return HttpResponse(
                 ok=False,
                 status=int(getattr(e, "code", 0)) if getattr(e, "code", None) is not None else None,
-                reason=getattr(e, "reason", None) or str(e),
+                reason=reason,
                 json=parsed if isinstance(parsed, dict) else None,
                 text=text,
             )
@@ -332,4 +394,15 @@ class OpenAICompatibleHttpClient:
                     },
                     step=step,
                 )
+            Console.debug(
+                safe_json_dumps(
+                    {
+                        "event": "llm_http_exception",
+                        "step": step,
+                        "error_type": type(e).__name__,
+                        "reason": str(e),
+                    }
+                )
+            )
+            Console.fatal(f"模型接口暂时连不上：{e}")
             return HttpResponse(ok=False, reason=str(e))

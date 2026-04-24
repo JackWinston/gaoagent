@@ -568,8 +568,10 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
     """
     from gaoagent.core.runner.HttpClient import HttpResponse
     from gaoagent.core.runner.BaseRunner import StepResult
+    from gaoagent.core.runner.Console import Console
 
     if not isinstance(response, HttpResponse):
+        Console.fatal(f"模型返回类型不对，收到的是：{type(response).__name__}。")
         return StepResult(
             decision="final",
             content=f"LLM 响应类型错误：{type(response).__name__}",
@@ -591,6 +593,17 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
         if body:
             # 错误体可能很长，避免污染终端与日志。
             content = f"{content}\n{truncate_text(body, 800)}"
+        Console.debug(
+            safe_json_dumps(
+                {
+                    "event": "llm_response_not_ok",
+                    "status": response.status,
+                    "reason": response.reason,
+                    "body_preview": summarize(body, 260),
+                }
+            )
+        )
+        Console.fatal(f"模型请求失败了：{status_text}，原因：{reason_text}")
 
         return StepResult(
             decision="final",

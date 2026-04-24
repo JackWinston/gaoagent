@@ -10,6 +10,7 @@ from gaoagent.core.runner.BaseRunner import (
     StepResult,
 )
 
+from gaoagent.core.runner.Console import Console
 from gaoagent.core.runner.HttpClient import OpenAICompatibleHttpClient
 from gaoagent.core.runner.Tooling import ToolCall, ToolRegistry, default_tool_registry
 from gaoagent.core.runner.Utils import (
@@ -17,6 +18,7 @@ from gaoagent.core.runner.Utils import (
     load_mcp_tools_cache,
     parse_llm_response,
     safe_json_dumps,
+    summarize,
     write_mcp_tools_cache_for_current_scope,
 )
 from gaoagent.core.runner.PromptBuilder import build_system_prompt
@@ -92,6 +94,53 @@ class ReActRunner(BaseRunner):
                 continue
             filtered[exported_name] = meta
         return filtered
+
+    @staticmethod
+    def _print_live_llm_request(step: int, attempt: int, max_attempts: int) -> None:
+        """在终端输出本轮 LLM 请求进度。"""
+        Console.interaction(
+            f"第{step}步: 正在请求数据..."
+        )
+
+    @staticmethod
+    def _print_live_llm_response(step: int, decision: str, content: str | None = None) -> None:
+        """在终端输出本轮 LLM 返回摘要。"""
+        if decision == "function_call":
+            Console.info(f"第{step}步: 收到响应 : 准备调工具")
+            return
+        if decision == "thought":
+            Console.info(
+                f"第{step}步: 思考中 : {summarize(content or '', 220)}"
+            )
+            return
+        if decision == "final":
+            Console.info(
+                f"第{step}步: 答案 {summarize(content or '', 220)}"
+            )
+            return
+        if decision == "retry":
+            Console.warn(
+                f"第{step}步: 收到响应 : 这次返回有点问题，马上再试一次：{summarize(content or '', 220)}"
+            )
+            return
+        Console.info(
+            f"第{step}步: 收到响应 : {decision} {summarize(content or '', 220)}"
+        )
+
+    @staticmethod
+    def _print_live_tool_call(step: int, tool_name: str, arguments: dict[str, Any]) -> None:
+        """在终端输出工具调用请求。"""
+        args_preview = summarize(safe_json_dumps(arguments), 200)
+        Console.interaction(
+            f"第{step}步: 收到响应 : 准备调工具 {tool_name} | 参数={args_preview}"
+        )
+
+    @staticmethod
+    def _print_live_tool_result(step: int, tool_name: str, observation: Any) -> None:
+        """在终端输出工具调用结果摘要。"""
+        Console.info(
+            f"第{step}步: 工具跑完了 {tool_name} => {summarize(observation, 240)}"
+        )
 
     def __init__(
         self,
@@ -200,9 +249,20 @@ class ReActRunner(BaseRunner):
         - 通过 run_logger 记录 step 结果与关键异常，便于线上排障。
         """
         if question is None or not str(question).strip():
+            Console.fatal("这个任务没法跑：问题内容是空的。")
             return RunResult(success=False, error="Invalid question")
 
         self.runner_context = RunnerContext(step=0, history=[])
+        Console.debug(
+            safe_json_dumps(
+                {
+                    "event": "runner_start",
+                    "mode": self.mode,
+                    "max_steps": self.runner_config.max_steps,
+                    "question_preview": (str(question).strip()[:200]),
+                }
+            )
+        )
 
         # MCP 工具发现策略：
         # 1) 优先读取配置阶段写入的工具缓存（最快、最稳定）。
@@ -276,6 +336,7 @@ class ReActRunner(BaseRunner):
                     reason_payload,
                     step=0,
                 )
+            Console.fatal("MCP 配好了，但一个能用的工具都没连上。先把 MCP 服务修好再试。")
             return RunResult(
                 success=False,
                 error=(
@@ -303,8 +364,27 @@ class ReActRunner(BaseRunner):
         for step in range(1, self.runner_config.max_steps + 1):
             # 更新上下文中的 step 信息
             self.runner_context.step = step
+            Console.debug(
+                safe_json_dumps(
+                    {
+                        "event": "step_start",
+                        "step": step,
+                        "history_size": len(self.runner_context.history),
+                    }
+                )
+            )
 
             now_step = self.decide(self.runner_context)
+            Console.debug(
+                safe_json_dumps(
+                    {
+                        "event": "step_decision",
+                        "step": step,
+                        "decision": now_step.decision,
+                        "content_preview": (now_step.content[:200] if isinstance(now_step.content, str) else ""),
+                    }
+                )
+            )
 
             run_logger = get_current_run_logger()
             if run_logger is not None:
@@ -312,6 +392,15 @@ class ReActRunner(BaseRunner):
 
             if now_step.decision == "function_call":
                 calls = now_step.function_call or []
+                Console.debug(
+                    safe_json_dumps(
+                        {
+                            "event": "step_function_call_enter",
+                            "step": step,
+                            "call_count": len(calls),
+                        }
+                    )
+                )
                 normalized_calls: list[dict] = []
                 for idx, call in enumerate(calls):
                     call_obj = call if isinstance(call, dict) else {}
@@ -354,6 +443,7 @@ class ReActRunner(BaseRunner):
                 )
 
                 if not self.runner_config.tools:
+                    Console.fatal("工具系统没准备好：没找到可用的 ToolRegistry。")
                     return RunResult(success=False, error="No tool registry configured")
 
                 for call in normalized_calls:
@@ -381,12 +471,22 @@ class ReActRunner(BaseRunner):
                             }
                         )
                     else:
+                        self._print_live_tool_call(step, name, arguments)
                         try:
                             # 路由顺序：
                             # 1) 先走内置 ToolRegistry（本地工具）
                             # 2) 再走 MCP 导出工具映射（远程/stdio 工具）
                             # 3) 两者都找不到则返回 Unknown tool
                             if self.runner_config.tools and name in self.runner_config.tools.list_names():
+                                Console.debug(
+                                    safe_json_dumps(
+                                        {
+                                            "event": "tool_call_local",
+                                            "step": step,
+                                            "tool": name,
+                                        }
+                                    )
+                                )
                                 observation = self.runner_config.tools.call(
                                     self.runner_context, ToolCall(name=name, arguments=arguments)
                                 )
@@ -400,6 +500,7 @@ class ReActRunner(BaseRunner):
                                     else None
                                 )
                                 if not isinstance(server_name, str) or not isinstance(tool_name, str) or not isinstance(server_cfg, dict):
+                                    Console.fatal(f"MCP 工具映射不完整，调用不了：{name}")
                                     observation = {
                                         "success": False,
                                         "error": {
@@ -408,6 +509,17 @@ class ReActRunner(BaseRunner):
                                         },
                                     }
                                 else:
+                                    Console.debug(
+                                        safe_json_dumps(
+                                            {
+                                                "event": "tool_call_mcp",
+                                                "step": step,
+                                                "tool": name,
+                                                "server": server_name,
+                                                "remote_tool": tool_name,
+                                            }
+                                        )
+                                    )
                                     # MCP 调用结果统一封装为 success/result 结构，便于模型侧稳定解析。
                                     observation = MCPStdioClientSync.from_config(
                                         server_name=server_name,
@@ -420,6 +532,7 @@ class ReActRunner(BaseRunner):
                                         "result": observation,
                                     }
                             else:
+                                Console.fatal(f"模型想调用不存在的工具：{name}")
                                 observation = {
                                     "success": False,
                                     "error": {
@@ -428,6 +541,7 @@ class ReActRunner(BaseRunner):
                                     },
                                 }
                         except Exception as e:
+                            Console.fatal(f"工具调用失败了：{name}，错误：{e}")
                             observation = safe_json_dumps(
                                 {
                                     "success": False,
@@ -446,6 +560,21 @@ class ReActRunner(BaseRunner):
                             ),
                         }
                     )
+                    Console.debug(
+                        safe_json_dumps(
+                            {
+                                "event": "tool_observation_written",
+                                "step": step,
+                                "tool": name if isinstance(name, str) else "",
+                                "observation_preview": summarize(observation, 180),
+                            }
+                        )
+                    )
+                    self._print_live_tool_result(
+                        step,
+                        name if isinstance(name, str) else "",
+                        observation,
+                    )
                 continue
             if now_step.decision == "thought":
                 protocol = (
@@ -463,6 +592,18 @@ class ReActRunner(BaseRunner):
                 self.runner_context.history.append(
                     {"role": "assistant", "content": assistant_content}
                 )
+                Console.info(
+                    f"第{step}步: 思考中 : {summarize(assistant_content, 240)}"
+                )
+                Console.debug(
+                    safe_json_dumps(
+                        {
+                            "event": "step_thought_written",
+                            "step": step,
+                            "preview": summarize(assistant_content, 180),
+                        }
+                    )
+                )
                 continue
             if now_step.decision == "final":
                
@@ -476,8 +617,18 @@ class ReActRunner(BaseRunner):
                 self.runner_context.history.append(
                     {"role": "assistant", "content": assistant_content}
                 )
+                Console.debug(
+                    safe_json_dumps(
+                        {
+                            "event": "runner_final",
+                            "step": step,
+                            "final_preview": summarize(now_step.content or "", 240),
+                        }
+                    )
+                )
                 return RunResult(success=True, final_result=now_step.content)
 
+        Console.fatal("任务跑到最大步数了，还没拿到最终结果。")
         return RunResult(success=False, error="Max steps reached")
 
     def _callLLM(self, ctx: RunnerContext) -> StepResult:
@@ -533,6 +684,7 @@ class ReActRunner(BaseRunner):
         - 与 `run()` 共用同一份 MCP 工具可见集，保证“可见即可调、可调即可见”。
         """
         if not self.request_base_info:
+            Console.fatal("没拿到可用的 API 配置，模型请求发不出去。")
             return StepResult(decision="final", content="No valid API configuration")
 
         client = OpenAICompatibleHttpClient(
@@ -563,6 +715,18 @@ class ReActRunner(BaseRunner):
 
         while attempt < max_attempts:
             attempt += 1
+            self._print_live_llm_request(ctx.step, attempt, max_attempts)
+            Console.debug(
+                safe_json_dumps(
+                    {
+                        "event": "llm_attempt",
+                        "step": ctx.step,
+                        "attempt": attempt,
+                        "max_attempts": max_attempts,
+                        "history_size": len(ctx.history),
+                    }
+                )
+            )
             response = client.post_chat_completions(
                 model=self.request_base_info.modules,
                 messages=ctx.history,
@@ -572,6 +736,20 @@ class ReActRunner(BaseRunner):
             )
             step_result = parse_llm_response(response)
             last_step = step_result
+            self._print_live_llm_response(
+                ctx.step, step_result.decision, step_result.content
+            )
+            Console.debug(
+                safe_json_dumps(
+                    {
+                        "event": "llm_parsed_result",
+                        "step": ctx.step,
+                        "attempt": attempt,
+                        "decision": step_result.decision,
+                        "content_preview": summarize(step_result.content, 200),
+                    }
+                )
+            )
 
             should_retry = step_result.decision == "retry"
             if not should_retry:
@@ -596,6 +774,9 @@ class ReActRunner(BaseRunner):
         raw = dict(last_step.raw) if last_step is not None and isinstance(last_step.raw, dict) else {}
         raw["_retry"] = {"attempts": max_attempts, "reason": "invalid_llm_output"}
         last_content = (last_step.content or "") if last_step is not None else ""
+        Console.fatal(
+            f"模型连续返回了不可执行内容，重试 {max_attempts} 次还是没成功。"
+        )
         return StepResult(
             decision="final",
             content=(

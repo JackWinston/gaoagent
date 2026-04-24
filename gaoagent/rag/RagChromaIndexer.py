@@ -185,6 +185,7 @@ class RagChromaIndexer:
                     )
                 done = min(i + len(batch), total_chunks)
                 progress = (done / total_chunks * 100.0) if total_chunks > 0 else 100.0
+                Console.info(f"正在处理中...({done}/{total_chunks}) {progress:.2f}%")
                 Console.debug(f"[RAG] 写入进度：done={done}/{total_chunks} ({progress:.2f}%)")
             final_chunk_count = int(collection.count())
         except Exception as e:

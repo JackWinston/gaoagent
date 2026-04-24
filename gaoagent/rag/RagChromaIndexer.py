@@ -9,13 +9,14 @@ import json
 import re
 import time
 import gc
+import sqlite3
 import urllib.request
 import urllib.error
 
 from gaoagent.rag.RagStorePath import (
     resolve_chroma_store_dir,
     resolve_index_meta_file,
-    resolve_bm25_index_file,
+    resolve_bm25_index_db,
 )
 
 
@@ -256,7 +257,7 @@ class RagChromaIndexer:
         store_dir = resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_name)
         store_dir.mkdir(parents=True, exist_ok=True)
         collection_name = self._sanitize_collection_name(kb_name)
-        bm25_index_file = resolve_bm25_index_file(kb_dir=kb_dir, kb_name=kb_name)
+        bm25_index_db = resolve_bm25_index_db(kb_dir=kb_dir, kb_name=kb_name)
 
         client: Any | None = None
         try:
@@ -318,7 +319,7 @@ class RagChromaIndexer:
                 kb_name=kb_name,
                 collection=collection,
                 incremental_chunks=new_chunks,
-                force_rebuild=(not bm25_index_file.exists()),
+                force_rebuild=(not bm25_index_db.exists()),
             )
             if not bm25_sync_ok:
                 return (False, f"写入 BM25 稀疏索引失败：{bm25_reason}")
@@ -531,31 +532,38 @@ class RagChromaIndexer:
         force_rebuild: bool,
     ) -> tuple[bool, str]:
         """
-        同步 BM25 稀疏索引文件。
+        同步 BM25 稀疏索引 SQLite 数据库。
 
         策略:
         - `force_rebuild=True` 或索引文件缺失/损坏：全量重建；
         - 其余情况：对新增 chunk 执行增量插入。
         """
-        bm25_file = resolve_bm25_index_file(kb_dir=kb_dir, kb_name=kb_name)
+        bm25_db = resolve_bm25_index_db(kb_dir=kb_dir, kb_name=kb_name)
         try:
-            if force_rebuild or (not bm25_file.exists()):
+            if force_rebuild or (not bm25_db.exists()):
                 records = self._load_collection_records(collection=collection)
-                payload = self._build_bm25_index_payload(kb_name=kb_name, records=records)
-                self._write_bm25_index(bm25_file=bm25_file, payload=payload)
+                self._rebuild_bm25_sqlite(
+                    bm25_db=bm25_db,
+                    kb_name=kb_name,
+                    records=records,
+                )
                 return (True, "")
 
-            payload = self._read_bm25_index(bm25_file=bm25_file)
-            if payload is None or not self._is_valid_bm25_index_payload(payload):
+            if not self._is_valid_bm25_sqlite(bm25_db=bm25_db):
                 records = self._load_collection_records(collection=collection)
-                rebuilt = self._build_bm25_index_payload(kb_name=kb_name, records=records)
-                self._write_bm25_index(bm25_file=bm25_file, payload=rebuilt)
+                self._rebuild_bm25_sqlite(
+                    bm25_db=bm25_db,
+                    kb_name=kb_name,
+                    records=records,
+                )
                 return (True, "")
 
             chunks = incremental_chunks or []
             if chunks:
-                self._apply_incremental_chunks_to_bm25(payload=payload, chunks=chunks)
-                self._write_bm25_index(bm25_file=bm25_file, payload=payload)
+                self._apply_incremental_chunks_to_bm25_sqlite(
+                    bm25_db=bm25_db,
+                    chunks=chunks,
+                )
             return (True, "")
         except Exception as e:
             return (False, str(e))
@@ -585,107 +593,135 @@ class RagChromaIndexer:
             offset += len(page_ids)
         return records
 
-    def _build_bm25_index_payload(self, *, kb_name: str, records: list[dict[str, Any]]) -> dict[str, Any]:
-        """基于全量记录构建 BM25 倒排索引载荷。"""
-        postings: dict[str, dict[str, Any]] = {}
-        doc_len: dict[str, int] = {}
-        documents: dict[str, str] = {}
-        metadatas: dict[str, dict[str, Any]] = {}
-        total_len = 0
+    def _rebuild_bm25_sqlite(self, *, bm25_db: Path, kb_name: str, records: list[dict[str, Any]]) -> None:
+        """全量重建 BM25 SQLite 索引。"""
+        bm25_db.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(str(bm25_db)) as conn:
+            self._ensure_bm25_sqlite_schema(conn=conn)
+            conn.execute("DELETE FROM bm25_terms")
+            conn.execute("DELETE FROM bm25_docs")
+            conn.execute("DELETE FROM bm25_meta")
 
-        for item in records:
-            cid = str(item.get("id") or "")
-            if not cid:
-                continue
-            text = str(item.get("document") or "")
-            meta = item.get("metadata")
-            metadata = dict(meta) if isinstance(meta, dict) else {}
-            tokens = self._tokenize_for_bm25(text)
-            tf = Counter(tokens)
-            dl = len(tokens)
-            doc_len[cid] = dl
-            documents[cid] = text
-            metadatas[cid] = metadata
-            total_len += dl
-            for token, term_tf in tf.items():
-                bucket = postings.setdefault(token, {"df": 0, "docs": {}})
-                bucket["docs"][cid] = int(term_tf)
+            doc_rows: list[tuple[str, str, str, int]] = []
+            term_rows: list[tuple[str, str, int]] = []
+            for item in records:
+                cid = str(item.get("id") or "")
+                if not cid:
+                    continue
+                text = str(item.get("document") or "")
+                meta = item.get("metadata")
+                metadata = dict(meta) if isinstance(meta, dict) else {}
+                tokens = self._tokenize_for_bm25(text)
+                tf = Counter(tokens)
+                doc_rows.append((cid, text, json.dumps(metadata, ensure_ascii=False), len(tokens)))
+                for term, term_tf in tf.items():
+                    term_rows.append((term, cid, int(term_tf)))
 
-        for bucket in postings.values():
-            docs_map = bucket.get("docs", {})
-            bucket["df"] = len(docs_map) if isinstance(docs_map, dict) else 0
+            if doc_rows:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO bm25_docs(doc_id, document, metadata_json, doc_len) VALUES (?, ?, ?, ?)",
+                    doc_rows,
+                )
+            if term_rows:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO bm25_terms(term, doc_id, tf) VALUES (?, ?, ?)",
+                    term_rows,
+                )
+            conn.executemany(
+                "INSERT OR REPLACE INTO bm25_meta(key, value) VALUES (?, ?)",
+                [("version", "1"), ("kb_name", kb_name)],
+            )
+            conn.commit()
 
-        doc_count = len(doc_len)
-        avgdl = (total_len / doc_count) if doc_count > 0 else 0.0
-        return {
-            "version": 1,
-            "kb_name": kb_name,
-            "doc_count": doc_count,
-            "avgdl": avgdl,
-            "doc_len": doc_len,
-            "documents": documents,
-            "metadatas": metadatas,
-            "postings": postings,
-        }
+    def _apply_incremental_chunks_to_bm25_sqlite(self, *, bm25_db: Path, chunks: list[dict[str, Any]]) -> None:
+        """将新增 chunk 增量写入 BM25 SQLite 索引。"""
+        if not chunks:
+            return
+        bm25_db.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(str(bm25_db)) as conn:
+            self._ensure_bm25_sqlite_schema(conn=conn)
+            ids = [str(item.get("id") or "") for item in chunks if str(item.get("id") or "")]
+            if not ids:
+                return
+            placeholders = ",".join(["?"] * len(ids))
+            existing_rows = conn.execute(
+                f"SELECT doc_id FROM bm25_docs WHERE doc_id IN ({placeholders})",
+                ids,
+            ).fetchall()
+            existing_ids = {str(row[0]) for row in existing_rows}
 
-    def _apply_incremental_chunks_to_bm25(self, *, payload: dict[str, Any], chunks: list[dict[str, Any]]) -> None:
-        """将新增 chunk 增量写入已存在的 BM25 索引载荷。"""
-        doc_len = payload.setdefault("doc_len", {})
-        documents = payload.setdefault("documents", {})
-        metadatas = payload.setdefault("metadatas", {})
-        postings = payload.setdefault("postings", {})
+            doc_rows: list[tuple[str, str, str, int]] = []
+            term_rows: list[tuple[str, str, int]] = []
+            for item in chunks:
+                cid = str(item.get("id") or "")
+                if not cid or cid in existing_ids:
+                    continue
+                text = str(item.get("document") or "")
+                meta = item.get("metadata")
+                metadata = dict(meta) if isinstance(meta, dict) else {}
+                tokens = self._tokenize_for_bm25(text)
+                tf = Counter(tokens)
+                doc_rows.append((cid, text, json.dumps(metadata, ensure_ascii=False), len(tokens)))
+                for term, term_tf in tf.items():
+                    term_rows.append((term, cid, int(term_tf)))
 
-        for item in chunks:
-            cid = str(item.get("id") or "")
-            if not cid or cid in doc_len:
-                continue
-            text = str(item.get("document") or "")
-            meta = item.get("metadata")
-            metadata = dict(meta) if isinstance(meta, dict) else {}
-            tokens = self._tokenize_for_bm25(text)
-            tf = Counter(tokens)
-            doc_len[cid] = len(tokens)
-            documents[cid] = text
-            metadatas[cid] = metadata
-            for token, term_tf in tf.items():
-                bucket = postings.setdefault(token, {"df": 0, "docs": {}})
-                docs_map = bucket.setdefault("docs", {})
-                if cid not in docs_map:
-                    docs_map[cid] = int(term_tf)
-                bucket["df"] = len(docs_map)
+            if doc_rows:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO bm25_docs(doc_id, document, metadata_json, doc_len) VALUES (?, ?, ?, ?)",
+                    doc_rows,
+                )
+            if term_rows:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO bm25_terms(term, doc_id, tf) VALUES (?, ?, ?)",
+                    term_rows,
+                )
+            conn.commit()
 
-        doc_count = len(doc_len)
-        total_len = sum(int(v) for v in doc_len.values())
-        payload["doc_count"] = doc_count
-        payload["avgdl"] = (total_len / doc_count) if doc_count > 0 else 0.0
-
-    def _write_bm25_index(self, *, bm25_file: Path, payload: dict[str, Any]) -> None:
-        """原子写入 BM25 索引文件。"""
-        bm25_file.parent.mkdir(parents=True, exist_ok=True)
-        tmp_file = bm25_file.with_name(f"{bm25_file.name}.tmp")
-        tmp_file.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
-            encoding="utf-8",
+    def _ensure_bm25_sqlite_schema(self, *, conn: sqlite3.Connection) -> None:
+        """创建 BM25 SQLite 所需表结构。"""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bm25_docs (
+                doc_id TEXT PRIMARY KEY,
+                document TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                doc_len INTEGER NOT NULL
+            )
+            """
         )
-        tmp_file.replace(bm25_file)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bm25_terms (
+                term TEXT NOT NULL,
+                doc_id TEXT NOT NULL,
+                tf INTEGER NOT NULL,
+                PRIMARY KEY (term, doc_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bm25_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_bm25_terms_term ON bm25_terms(term)")
 
-    def _read_bm25_index(self, *, bm25_file: Path) -> dict[str, Any] | None:
-        """读取 BM25 索引文件；读取失败返回 None。"""
-        if not bm25_file.exists() or not bm25_file.is_file():
-            return None
+    def _is_valid_bm25_sqlite(self, *, bm25_db: Path) -> bool:
+        """校验 BM25 SQLite 文件结构。"""
+        if not bm25_db.exists() or not bm25_db.is_file():
+            return False
         try:
-            data = json.loads(bm25_file.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else None
+            with sqlite3.connect(str(bm25_db)) as conn:
+                rows = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('bm25_docs', 'bm25_terms', 'bm25_meta')"
+                ).fetchall()
+                names = {str(r[0]) for r in rows}
+                return {"bm25_docs", "bm25_terms", "bm25_meta"}.issubset(names)
         except Exception:
-            return None
-
-    def _is_valid_bm25_index_payload(self, payload: dict[str, Any]) -> bool:
-        """校验 BM25 索引载荷结构是否满足最小要求。"""
-        required = ("doc_count", "avgdl", "doc_len", "documents", "metadatas", "postings")
-        for key in required:
-            if key not in payload:
-                return False
-        return isinstance(payload.get("postings"), dict) and isinstance(payload.get("doc_len"), dict)
+            return False
 
     def _tokenize_for_bm25(self, text: str) -> list[str]:
         """轻量 BM25 分词：英文按词，中文按单字。"""

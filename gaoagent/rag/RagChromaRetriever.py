@@ -5,6 +5,7 @@ import urllib.request
 import urllib.error
 import re
 import math
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
 from pathlib import Path
@@ -15,7 +16,7 @@ from gaoagent.rag.RagChromaIndexer import RagChromaIndexer, RagChromaIndexerConf
 from gaoagent.rag.RagStorePath import (
     resolve_chroma_store_dir,
     resolve_index_meta_file,
-    resolve_bm25_index_file,
+    resolve_bm25_index_db,
 )
 from gaoagent.core.runner.Utils import _find_config_file
 
@@ -35,7 +36,7 @@ class RagChromaRetriever:
         self.kb_dir = self.rag_dir / kb_name
         self.store_dir = resolve_chroma_store_dir(kb_dir=self.kb_dir, kb_name=kb_name)
         self.meta_file = resolve_index_meta_file(kb_dir=self.kb_dir, kb_name=kb_name)
-        self.bm25_file = resolve_bm25_index_file(kb_dir=self.kb_dir, kb_name=kb_name)
+        self.bm25_db = resolve_bm25_index_db(kb_dir=self.kb_dir, kb_name=kb_name)
 
     def search(self, query: str, top_k: int = 3, score_threshold: float = 0.0) -> dict[str, Any]:
         """
@@ -125,17 +126,15 @@ class RagChromaRetriever:
         """
         确保 BM25 索引文件可用；缺失或损坏时自动触发一次内部 update。
         """
-        payload = self._try_load_bm25_payload_from_file()
-        if payload is not None:
+        if self._is_bm25_sqlite_ready():
             return (True, "")
 
         ok, reason = self._run_internal_update()
         if not ok:
             return (False, f"BM25 索引缺失且内部更新失败：{reason}")
 
-        payload = self._try_load_bm25_payload_from_file()
-        if payload is None:
-            return (False, f"BM25 索引仍不可用：{self.bm25_file}")
+        if not self._is_bm25_sqlite_ready():
+            return (False, f"BM25 索引仍不可用：{self.bm25_db}")
         return (True, "")
 
     def _run_internal_update(self) -> tuple[bool, str]:
@@ -318,7 +317,7 @@ class RagChromaRetriever:
         """执行 BM25 关键词召回，返回按 BM25 分数降序的候选。
 
         数据来源:
-        - 仅使用持久化 BM25 索引文件（`bm25_index.json`）；
+        - 仅使用持久化 BM25 索引数据库（`bm25_index.db`）；
         - 不再回退到 Chroma 现算，索引缺失/损坏将直接报错。
 
         结果语义:
@@ -327,92 +326,114 @@ class RagChromaRetriever:
         - `retrieval_source`：标记当前候选来源为 `bm25`。
         """
         _ = collection  # 保留参数以维持方法签名兼容；严格模式下不使用 collection 回退。
-        bm25_payload = self._load_bm25_payload_from_file_required()
-        return self._bm25_recall_from_payload(payload=bm25_payload, query=query, top_k=top_k)
+        return self._bm25_recall_from_sqlite(query=query, top_k=top_k)
 
-    def _load_bm25_payload_from_file_required(self) -> dict[str, Any]:
-        """严格读取持久化 BM25 索引文件；缺失或损坏时直接抛错。"""
-        payload = self._try_load_bm25_payload_from_file()
-        if payload is None:
+    def _ensure_bm25_sqlite_required(self) -> None:
+        """严格校验 BM25 SQLite；缺失或损坏时直接抛错。"""
+        if not self._is_bm25_sqlite_ready():
             raise RuntimeError(
-                f"BM25 索引不可用：{self.bm25_file}；请执行 `gaoagent rag update {self.kb_name}` 重建双索引"
+                f"BM25 索引不可用：{self.bm25_db}；请执行 `gaoagent rag update {self.kb_name}` 重建双索引"
             )
-        return payload
 
-    def _try_load_bm25_payload_from_file(self) -> dict[str, Any] | None:
-        """尝试读取 BM25 索引文件并做最小结构校验，不抛异常。"""
-        if not self.bm25_file.exists() or not self.bm25_file.is_file():
-            return None
+    def _is_bm25_sqlite_ready(self) -> bool:
+        """检测 BM25 SQLite 是否存在且包含必要表。"""
+        if not self.bm25_db.exists() or not self.bm25_db.is_file():
+            return False
         try:
-            data = json.loads(self.bm25_file.read_text(encoding="utf-8"))
+            with sqlite3.connect(str(self.bm25_db)) as conn:
+                rows = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('bm25_docs', 'bm25_terms', 'bm25_meta')"
+                ).fetchall()
+                names = {str(r[0]) for r in rows}
+                return {"bm25_docs", "bm25_terms", "bm25_meta"}.issubset(names)
         except Exception:
-            return None
-        if not isinstance(data, dict):
-            return None
-        required = ("doc_count", "avgdl", "doc_len", "documents", "metadatas", "postings")
-        if any(k not in data for k in required):
-            return None
-        if not isinstance(data.get("postings"), dict):
-            return None
-        return data
+            return False
 
-    def _bm25_recall_from_payload(self, *, payload: dict[str, Any], query: str, top_k: int) -> list[dict[str, Any]]:
-        """基于持久化 BM25 倒排索引执行召回。"""
-        postings = payload.get("postings") or {}
-        doc_len_map = payload.get("doc_len") or {}
-        documents = payload.get("documents") or {}
-        metadatas = payload.get("metadatas") or {}
-        doc_count = int(payload.get("doc_count") or 0)
-        avgdl = float(payload.get("avgdl") or 0.0)
-        if doc_count <= 0 or avgdl <= 0.0:
-            return []
+    def _bm25_recall_from_sqlite(self, *, query: str, top_k: int) -> list[dict[str, Any]]:
+        """基于持久化 BM25 SQLite 执行召回。"""
+        self._ensure_bm25_sqlite_required()
+        with sqlite3.connect(str(self.bm25_db)) as conn:
+            row = conn.execute("SELECT COUNT(*), COALESCE(AVG(doc_len), 0.0) FROM bm25_docs").fetchone()
+            doc_count = int(row[0]) if row is not None else 0
+            avgdl = float(row[1]) if row is not None else 0.0
+            if doc_count <= 0 or avgdl <= 0.0:
+                return []
 
-        query_tokens = self._tokenize_for_bm25(query)
-        if not query_tokens:
-            return []
+            query_tokens = self._tokenize_for_bm25(query)
+            if not query_tokens:
+                return []
 
-        query_tf = Counter(query_tokens)
-        k1 = 1.2
-        b = 0.75
-        k3 = 1.0
-        scores: dict[str, float] = {}
-        for token, qf in query_tf.items():
-            token_node = postings.get(token)
-            if not isinstance(token_node, dict):
-                continue
-            docs_map = token_node.get("docs")
-            if not isinstance(docs_map, dict) or not docs_map:
-                continue
-            token_df = int(token_node.get("df", len(docs_map)))
-            idf = math.log(((doc_count - token_df + 0.5) / (token_df + 0.5)) + 1.0)
-            qtf_weight = ((k3 + 1.0) * qf) / (k3 + qf)
-            for cid, raw_tf in docs_map.items():
-                token_tf = int(raw_tf)
-                if token_tf <= 0:
+            query_tf = Counter(query_tokens)
+            k1 = 1.2
+            b = 0.75
+            k3 = 1.0
+            scores: dict[str, float] = {}
+            candidate_ids: set[str] = set()
+            postings_by_term: dict[str, list[tuple[str, int]]] = {}
+            for token in query_tf.keys():
+                rows = conn.execute(
+                    "SELECT doc_id, tf FROM bm25_terms WHERE term = ?",
+                    (token,),
+                ).fetchall()
+                parsed = [(str(r[0]), int(r[1])) for r in rows]
+                postings_by_term[token] = parsed
+                for doc_id, _ in parsed:
+                    candidate_ids.add(doc_id)
+
+            if not candidate_ids:
+                return []
+
+            placeholders = ",".join(["?"] * len(candidate_ids))
+            doc_rows = conn.execute(
+                f"SELECT doc_id, doc_len, document, metadata_json FROM bm25_docs WHERE doc_id IN ({placeholders})",
+                list(candidate_ids),
+            ).fetchall()
+            doc_map: dict[str, tuple[int, str, str]] = {
+                str(r[0]): (int(r[1]), str(r[2]), str(r[3])) for r in doc_rows
+            }
+
+            for token, qf in query_tf.items():
+                token_postings = postings_by_term.get(token, [])
+                token_df = len(token_postings)
+                if token_df <= 0:
                     continue
-                dl = float(doc_len_map.get(cid, 0))
-                if dl <= 0:
-                    continue
-                norm_k = k1 * (1.0 - b + b * (dl / avgdl))
-                tf_weight = ((k1 + 1.0) * token_tf) / (norm_k + token_tf)
-                scores[str(cid)] = float(scores.get(str(cid), 0.0)) + (idf * tf_weight * qtf_weight)
+                idf = math.log(((doc_count - token_df + 0.5) / (token_df + 0.5)) + 1.0)
+                qtf_weight = ((k3 + 1.0) * qf) / (k3 + qf)
+                for doc_id, token_tf in token_postings:
+                    doc_entry = doc_map.get(doc_id)
+                    if doc_entry is None:
+                        continue
+                    dl = float(doc_entry[0])
+                    if dl <= 0:
+                        continue
+                    norm_k = k1 * (1.0 - b + b * (dl / avgdl))
+                    tf_weight = ((k1 + 1.0) * token_tf) / (norm_k + token_tf)
+                    scores[doc_id] = float(scores.get(doc_id, 0.0)) + (idf * tf_weight * qtf_weight)
 
-        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        items: list[dict[str, Any]] = []
-        for cid, score in ranked[:top_k]:
-            items.append(
-                {
-                    "id": str(cid),
-                    "document": str(documents.get(cid, "")),
-                    "metadata": dict(metadatas.get(cid, {})) if isinstance(metadatas.get(cid), dict) else {},
-                    "distance": 0.0,
-                    "vector_distance": 0.0,
-                    "bm25_score": float(score),
-                    "score": float(score),
-                    "retrieval_source": "bm25",
-                }
-            )
-        return items
+            ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+            items: list[dict[str, Any]] = []
+            for doc_id, score in ranked[:top_k]:
+                doc_entry = doc_map.get(doc_id)
+                if doc_entry is None:
+                    continue
+                metadata_json = doc_entry[2]
+                try:
+                    metadata = json.loads(metadata_json)
+                except Exception:
+                    metadata = {}
+                items.append(
+                    {
+                        "id": doc_id,
+                        "document": doc_entry[1],
+                        "metadata": metadata if isinstance(metadata, dict) else {},
+                        "distance": 0.0,
+                        "vector_distance": 0.0,
+                        "bm25_score": float(score),
+                        "score": float(score),
+                        "retrieval_source": "bm25",
+                    }
+                )
+            return items
 
     def _rrf_fuse(
         self,

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from gaoagent.core.CoreConfigDefault import CoreConfigDefault
+from gaoagent.core.runner.Utils import try_project_root_dir
 from gaoagent.rag.RagStorePath import (
     resolve_chroma_store_dir,
     resolve_index_meta_file,
@@ -54,7 +55,7 @@ class RagHandlers:
             kb_name = click.prompt("请输入要新增的知识库名称", type=str).strip()
         chunker_file = (chunker_py_file or "").strip() or None
 
-        project_root = self._detect_project_root()
+        project_root = try_project_root_dir()
         config_default = CoreConfigDefault()
         if project_root is None:
             config_default.create_rag_knowledge_base(kb_name=kb_name, chunker_py_file=chunker_file)
@@ -132,7 +133,7 @@ class RagHandlers:
         target_name = (name or "").strip()
         chunker_file = (chunker_py_file or "").strip() or None
         config_default = CoreConfigDefault()
-        project_root = self._detect_project_root()
+        project_root = try_project_root_dir()
         if project_root is None:
             global_rag_dir = self._global_rag_dir()
             names = self._list_kb_names(global_rag_dir) if global_rag_dir.exists() else []
@@ -214,7 +215,7 @@ class RagHandlers:
 
     def _resolve_scope_and_rag_dir(self) -> tuple[str, Path]:
         """解析当前作用域并返回对应 RAG 根目录。"""
-        project_root = self._detect_project_root()
+        project_root = try_project_root_dir()
         if project_root is not None:
             return ("项目", project_root / ".gaoagent" / "rag")
         return ("全局", self._global_rag_dir())
@@ -232,62 +233,6 @@ class RagHandlers:
                 if p.is_dir() and not is_internal_rag_store_dir_name(p.name)
             ]
         )
-
-    def _project_registry_file(self) -> Path:
-        """返回项目注册表文件路径。"""
-        return Path.home() / ".gaoagent" / "inited_projects.txt"
-
-    def _load_project_registry_paths(self) -> list[Path]:
-        """读取项目注册表并返回去重后的项目根路径列表。"""
-        registry_file = self._project_registry_file()
-        if not registry_file.exists() or not registry_file.is_file():
-            return []
-        try:
-            lines = registry_file.read_text(encoding="utf-8").splitlines()
-        except Exception:
-            return []
-
-        roots: list[Path] = []
-        seen: set[str] = set()
-        for line in lines:
-            raw = line.strip()
-            if not raw:
-                continue
-            try:
-                root = Path(raw).expanduser().resolve()
-            except Exception:
-                continue
-            key = str(root)
-            if key in seen:
-                continue
-            seen.add(key)
-            roots.append(root)
-        return roots
-
-    def _detect_project_root(self) -> Path | None:
-        """检测当前命令所在项目根目录。
-
-        判定规则:
-        - 当前目录含 `.gaoagent` 时直接视为项目根。
-        - 否则从注册表中匹配“最深父目录”作为项目根。
-        """
-        cwd = Path.cwd().resolve()
-        config_dir = cwd / ".gaoagent"
-        if config_dir.exists() and config_dir.is_dir():
-            return cwd
-
-        candidates: list[Path] = []
-        for root in self._load_project_registry_paths():
-            config = root / ".gaoagent"
-            if not (root.exists() and root.is_dir() and config.exists() and config.is_dir()):
-                continue
-            if root == cwd or root in cwd.parents:
-                candidates.append(root)
-
-        if not candidates:
-            return None
-        candidates.sort(key=lambda p: len(p.parts), reverse=True)
-        return candidates[0]
 
     def _copy_dir(self, src: Path, dst: Path) -> None:
         """目录覆盖复制：目标存在时先删后拷。"""

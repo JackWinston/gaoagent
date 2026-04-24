@@ -28,15 +28,15 @@ def resolve_index_meta_file(*, kb_dir: Path, kb_name: str) -> Path:
     return resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_name) / "index_meta.json"
 
 
-def resolve_bm25_index_file(*, kb_dir: Path, kb_name: str) -> Path:
+def resolve_bm25_index_db(*, kb_dir: Path, kb_name: str) -> Path:
     """
-    BM25 稀疏索引文件路径。
+    BM25 稀疏索引 SQLite 文件路径。
 
     说明:
     - 与 Chroma 与 index_meta 保持同目录，便于项目/全局同步时整体迁移。
-    - 该文件用于保存倒排统计与文档快照，供增量更新与关键词检索复用。
+    - 该数据库用于保存倒排统计与文档快照，供增量更新与关键词检索复用。
     """
-    return resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_name) / "bm25_index.json"
+    return resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_name) / "bm25_index.db"
 
 
 def is_internal_rag_store_dir_name(name: str) -> bool:

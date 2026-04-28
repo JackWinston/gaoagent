@@ -583,6 +583,27 @@ def load_rag() -> dict[str, Any] | None:
     return {"available": True, "indexes": indexes}
 
 
+def load_a2a_agents() -> dict[str, Any] | None:
+    """
+    加载项目作用域下的 A2A Agent 配置。
+
+    返回结构:
+    - 字典，key 为 agent_name，value 为其配置对象（包含 url 等）。
+    """
+    path = _find_config_file("gao_client_a2a_setting.json")
+    if path is None:
+        return None
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict) and isinstance(payload.get("agents"), dict):
+            return payload["agents"]
+    except Exception:
+        pass
+    return None
+
+
 def parse_llm_response(response: HttpResponse) -> StepResult:
     """
     将底层 HTTP 客户端返回的 LLM 响应规范化为 StepResult。

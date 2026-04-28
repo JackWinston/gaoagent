@@ -135,6 +135,8 @@ class CoreConfigDefault:
 
         self._import_rag_config()
 
+        self._import_a2a_agent_config()
+
     def _ensure_config_dir(self) -> Path:
         """
         确保用户级配置目录存在。
@@ -317,6 +319,39 @@ class CoreConfigDefault:
         if Console.confirm("是否跳过 RAG 配置？", default=False):
             return False
         return self.create_rag_knowledge_base()
+
+    def _import_a2a_agent_config(self) -> None:
+        """
+        引导用户输入 A2A Agent 相关配置，将其写入全局配置。
+        """
+        if Console.confirm("是否跳过 A2A Agent 配置？", default=False):
+            return
+        
+        config_dir = self._ensure_config_dir()
+        a2a_file = config_dir / "gao_client_a2a_setting.json"
+        
+        agents: dict[str, Any] = {}
+        existing = self._read_json(a2a_file)
+        if isinstance(existing, dict) and isinstance(existing.get("agents"), dict):
+            agents = existing["agents"]
+            
+        new_count = 0
+        while True:
+            name = self._prompt_non_empty_str("请输入 A2A Agent 名称 (例如 gao_sql_agent)")
+            if name in agents:
+                Console.info(f"该 Agent '{name}' 已存在，将被覆盖。")
+                
+            url = self._prompt_non_empty_str("请输入 Agent Card URL (例如 http://localhost:8000/a2a)")
+            
+            agents[name] = {"url": url}
+            self._write_json(a2a_file, {"agents": agents})
+            new_count += 1
+            Console.info(f"已添加 A2A Agent：{name} -> {url}")
+            
+            if not Console.confirm("继续添加另一个 A2A Agent？", default=False):
+                break
+                
+        Console.info(f"A2A Agent 配置采集完成，本次新增 {new_count} 个")
 
     def create_rag_knowledge_base(
         self,

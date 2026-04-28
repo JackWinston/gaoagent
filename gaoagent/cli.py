@@ -653,6 +653,49 @@ def api_default_cmd(name: str) -> None:
     dispatch("api.default", name=name)
 
 
+@cli.group(
+    "agent",
+    help=(
+        "A2A 智能体命令组：list/add/remove/serve。\n"
+        "示例：gaoagent agent list"
+    ),
+)
+def agent_group() -> None:
+    """
+    A2A 智能体子命令组入口。
+    """
+    pass
+
+@agent_group.command(
+    "list",
+    help="列出所有远程可以控制的智能体。示例：gaoagent agent list",
+)
+def agent_list_cmd() -> None:
+    dispatch("agent.list")
+
+@agent_group.command(
+    "add",
+    help="添加远程可以控制的智能体。示例：gaoagent agent add",
+)
+def agent_add_cmd() -> None:
+    dispatch("agent.add")
+
+@agent_group.command(
+    "remove",
+    help="移除远程可以控制的智能体。示例：gaoagent agent remove my-agent",
+)
+@click.argument("name", required=False)
+def agent_remove_cmd(name: str | None) -> None:
+    dispatch("agent.remove", name=name)
+
+@agent_group.command(
+    "serve",
+    help="创建当前智能体的远程服务 (A2A Server)。示例：gaoagent agent serve --port 8000",
+)
+@click.option("--port", type=int, default=8000, help="服务端口")
+def agent_serve_cmd(port: int) -> None:
+    dispatch("agent.serve", port=port)
+
 def main() -> None:
     """
     程序入口函数。

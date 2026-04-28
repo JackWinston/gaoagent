@@ -21,6 +21,7 @@
 
 - 统一 CLI 入口，支持子命令和快捷任务两种调用方式
 - 支持 MCP 服务配置、启停、连通性测试与工具清单查看
+- 支持 Agent-to-Agent (A2A) 协议，允许将你的 Agent 暴露为服务或委派任务给其他远程节点
 - 支持 Skills 安装/卸载与作用域管理（项目/全局）
 - 支持 RAG 知识库创建、更新、删除、语义检索
 - 支持多 API 配置与默认模型切换
@@ -37,6 +38,8 @@
 - `click>=8.1`
 - `modelcontextprotocol`
 - `chromadb==1.5.8`
+- `a2a-sdk>=1.0.0`
+- `uvicorn` 和 `starlette` (作为 A2A 服务端所需)
 
 说明：依赖声明位于 `pyproject.toml`，通过 `pip install` 安装项目时自动拉取。
 
@@ -329,11 +332,49 @@ gaoagent api edit openai
 gaoagent api default openai
 ```
 
-### 4.7 配置文件位置
+### 4.7 A2A Agent 命令组：`gaoagent agent`
+
+用于 Agent-to-Agent (A2A) 远程智能体节点配置，以及将自身暴露为 A2A 服务端。
+
+#### `gaoagent agent list`
+
+列出当前作用域下已配置的所有远程 A2A 智能体。
+
+```bash
+gaoagent agent list
+```
+
+#### `gaoagent agent add`
+
+交互式添加一个远程可以控制的 A2A 智能体（需要输入节点名称与 Agent Card URL）。
+
+```bash
+gaoagent agent add
+```
+
+#### `gaoagent agent remove [name]`
+
+移除指定的远程 A2A 智能体。
+
+```bash
+gaoagent agent remove
+gaoagent agent remove gao_sql_agent
+```
+
+#### `gaoagent agent serve [--port 8000]`
+
+将当前 GaoAgent 实例暴露为一个 A2A 协议的服务端节点，其他支持 A2A 协议的客户端即可通过该端口下发的任务委派进行调度。
+
+```bash
+gaoagent agent serve --port 8000
+```
+
+### 4.8 配置文件位置
 
 - 全局配置目录：`~/.gaoagent/`
 - 全局 API 配置：`~/.gaoagent/gao_client_api_config.json`
 - 全局 MCP 配置：`~/.gaoagent/gao_client_mcp_setting.json`
+- 全局 A2A 配置：`~/.gaoagent/gao_client_a2a_setting.json`
 - 项目配置目录：`<project_root>/.gaoagent/`
 
 ## FAQ

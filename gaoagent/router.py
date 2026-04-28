@@ -8,6 +8,7 @@ from gaoagent.rag.RagHandlers import RagHandlers
 from gaoagent.skills.SkillsHandlers import SkillsHandlers
 from gaoagent.mcp.MCPHandlers import MCPHandlers
 from gaoagent.api.ApiHandlers import ApiHandlers
+from gaoagent.agent.AgentHandlers import AgentHandlers
 
 @dataclass(frozen=True)
 class Route:
@@ -61,6 +62,11 @@ ROUTES: dict[str, Route] = {
     "api.remove": Route(factory=ApiHandlers, method_name="remove"),
     "api.edit": Route(factory=ApiHandlers, method_name="edit"),
     "api.default": Route(factory=ApiHandlers, method_name="default"),
+
+    "agent.list": Route(factory=AgentHandlers, method_name="list_agents"),
+    "agent.add": Route(factory=AgentHandlers, method_name="add_agent"),
+    "agent.remove": Route(factory=AgentHandlers, method_name="remove_agent"),
+    "agent.serve": Route(factory=AgentHandlers, method_name="register_agent"),
 }
 
 

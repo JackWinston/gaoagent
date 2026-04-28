@@ -475,18 +475,7 @@ def default_tool_registry() -> ToolRegistry:
             }
 
     def _rag_search(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
-        """_rag_search 函数。
-        
-        用途:
-        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
-        
-        参数:
-        - _ctx: 输入参数，用于控制该函数的处理行为。
-        - args: 输入参数，用于控制该函数的处理行为。
-        
-        返回:
-        - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
-        """
+        """_rag_search 函数。"""
         kb_name = args.get("kb_name")
         query = args.get("query")
         top_k = args.get("top_k", 5)
@@ -502,6 +491,77 @@ def default_tool_registry() -> ToolRegistry:
             return retriever.search(query=query, top_k=int(top_k))
         except Exception as e:
             return {"success": False, "error": f"检索异常：{str(e)}"}
+
+    def _a2a_call(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+        """
+        调用远程 A2A Agent。
+        
+        参数:
+        - agent_name: 目标 A2A Agent 名称
+        - query: 需要委派的具体任务或问题
+        """
+        agent_name = args.get("agent_name")
+        query = args.get("query")
+        
+        if not isinstance(agent_name, str) or not agent_name.strip():
+            return {"success": False, "error": "agent_name 不能为空"}
+        if not isinstance(query, str) or not query.strip():
+            return {"success": False, "error": "query 不能为空"}
+
+        try:
+            from gaoagent.core.runner.Utils import load_a2a_agents
+            import httpx
+            import asyncio
+            from a2a.client import A2AClient
+            from a2a.types import Message, Part
+            
+            agents = load_a2a_agents() or {}
+            if agent_name not in agents:
+                return {"success": False, "error": f"未找到名为 {agent_name} 的 A2A Agent 配置。请检查 gao_client_a2a_setting.json"}
+            
+            agent_url = agents[agent_name].get("url")
+            if not agent_url:
+                return {"success": False, "error": f"Agent {agent_name} 未配置 url"}
+
+            # 因为 Tool 调用在同步线程中执行，使用 asyncio.run 驱动 A2A 的异步调用
+            async def _do_call():
+                async with httpx.AsyncClient(timeout=60.0) as http_client:
+                    client = A2AClient(http_client=http_client, agent_card_url=agent_url)
+                    message = Message(
+                        role="user",
+                        parts=[Part(type="text", text=query)]
+                    )
+                    
+                    Console.info(f"🚀 正在将任务委派给远程 A2A 节点: {agent_name}...")
+                    task = await client.create_task(message=message)
+                    
+                    # 同步等待直到任务完成或失败
+                    final_result = ""
+                    async for event in client.subscribe_task(task.id):
+                        if event.type == "artifact_update":
+                            for part in event.artifact.parts:
+                                if part.type == "text":
+                                    Console.info(f"[{agent_name} 进度] {part.text}")
+                        elif event.type == "task_complete":
+                            # 取最后一条 artifact
+                            try:
+                                t = await client.get_task(task.id)
+                                if t.artifacts and t.artifacts[-1].parts:
+                                    final_result = t.artifacts[-1].parts[0].text
+                            except Exception:
+                                pass
+                            break
+                        elif event.type == "task_failed":
+                            return {"success": False, "error": f"远程任务执行失败: {event.error}"}
+                            
+                    return {"success": True, "agent_name": agent_name, "result": final_result}
+
+            return asyncio.run(_do_call())
+            
+        except ImportError:
+            return {"success": False, "error": "未安装 a2a-sdk，无法调用 A2A 节点。请先执行 pip install a2a-sdk"}
+        except Exception as e:
+            return {"success": False, "error": f"A2A 调用异常: {str(e)}"}
 
     def _search_workspace(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
         """在当前项目范围内执行全文检索（基于 ripgrep）。"""
@@ -775,4 +835,5 @@ def default_tool_registry() -> ToolRegistry:
     tools.register("run_command", _run_command)
     tools.register("search_workspace", _search_workspace)
     tools.register("rag_search", _rag_search)
+    tools.register("a2a_call", _a2a_call)
     return tools

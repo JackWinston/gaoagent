@@ -56,6 +56,21 @@ def build_react_system_text(*, tool_names: list[str] | None) -> str:
         else ""
     )
 
+    a2a_str = _getA2AStr()
+    a2a_section : str = ""
+    if a2a_str is None:
+        a2a_section = ""
+    else :
+        a2a_section = (
+        f"""
+【A2A 智能体协作规则】
+当前项目已连接以下远程 A2A 智能体。如果任务超出你的能力边界或需要协作，请通过 `a2a_call` 工具委派任务给对应的智能体：
+{a2a_str}
+"""
+        if a2a_str
+        else ""
+    )
+
     skill_str = _getSkillStr()
     skill_section : str = ""
     if skill_str is None:
@@ -112,6 +127,8 @@ def build_react_system_text(*, tool_names: list[str] | None) -> str:
 
 {rag_section}
 
+{a2a_section}
+
 {skill_section}
 
 {tools_section}
@@ -162,4 +179,19 @@ def _getSkillStr() -> str | None:
         )
         index += 1
 
+    return "".join(result)
+
+def _getA2AStr() -> str | None:
+    """
+    构建 A2A 远程 Agent 列表字符串，用于在系统提示词中引用。
+    """
+    from gaoagent.core.runner.Utils import load_a2a_agents
+    agents = load_a2a_agents()
+    if not agents:
+        return None
+    
+    result: list[str] = []
+    for idx, (name, info) in enumerate(sorted(agents.items()), 1):
+        url = info.get("url", "未知地址")
+        result.append(f"{idx}. {name} [地址: {url}]\n")
     return "".join(result)

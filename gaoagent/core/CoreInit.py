@@ -72,6 +72,7 @@ class CoreInit:
         config_default = CoreConfigDefault()
         global_api_file = global_dir / "gao_client_api_config.json"
         global_mcp_file = global_dir / "gao_client_mcp_setting.json"
+        global_a2a_file = global_dir / "gao_client_a2a_setting.json"
         global_skills_dir = global_dir / "skills"
         global_rag_dir = global_dir / "rag"
 
@@ -141,6 +142,15 @@ class CoreInit:
             Console.info(f"已复制 RAG 知识库：{imported_count} 个 → {project_rag_dir}")
         else:
             Console.info("未选择任何 RAG 知识库（已跳过）")
+
+        project_a2a_file = project_dir / "gao_client_a2a_setting.json"
+        a2a_configs = self._load_global_a2a_configs(config_default, global_a2a_file)
+        selected_a2a = self._prompt_select_a2a(a2a_configs)
+        if selected_a2a:
+            self._write_json(project_a2a_file, {"agents": selected_a2a})
+            Console.info(f"已写入项目 A2A Agent 配置：{project_a2a_file}")
+        else:
+            Console.info("未选择任何 A2A Agent（已跳过）")
 
         self._ensure_gitignore_contains(current_root, ".gaoagent/")
         self._register_project_root(registry_file, current_root)
@@ -249,6 +259,31 @@ class CoreInit:
             if isinstance(payload.get("mcpServers"), dict):
                 return payload["mcpServers"]
         return {}
+
+    def _load_global_a2a_configs(self, config_default: CoreConfigDefault, a2a_file: Path) -> dict[str, Any]:
+        """读取全局 A2A Agent 配置并返回 `agents` 映射。"""
+        payload = config_default._read_json(a2a_file)
+        if isinstance(payload, dict):
+            if isinstance(payload.get("agents"), dict):
+                return payload["agents"]
+        return {}
+
+    def _prompt_select_a2a(self, a2a_configs: dict[str, Any]) -> dict[str, Any]:
+        """交互选择要写入项目配置的 A2A Agent 子集。"""
+        if not a2a_configs:
+            Console.info("未检测到任何全局 A2A Agent 配置（将写入空配置）")
+            return {}
+
+        names = sorted([str(x) for x in a2a_configs.keys()])
+        Console.info("已加载的 A2A Agent：")
+        for i, name in enumerate(names, start=1):
+            Console.info(f"{i}. {name}")
+
+        selected = self._prompt_multi_select("请选择 A2A Agent（输入序号或名称，逗号分隔；回车跳过；输入 all 选择全部）", names)
+        if not selected:
+            return {}
+
+        return {name: a2a_configs[name] for name in selected}
 
     def _prompt_select_mcp(self, mcp_configs: dict[str, Any]) -> dict[str, Any]:
         """交互选择要写入项目配置的 MCP 服务子集。

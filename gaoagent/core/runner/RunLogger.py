@@ -103,7 +103,10 @@ def create_run_logger() -> RunLogger:
     返回:
     - RunLogger: 返回一个新的 RunLogger 实例。
     """
-    logs_dir = project_config_dir() / "logs"
+    cfg_dir = project_config_dir()
+    if cfg_dir is None:
+        raise RuntimeError("当前目录或其父目录未初始化 GaoAgent 项目。请先运行 `gaoagent init`。")
+    logs_dir = cfg_dir / "logs"
     ts = datetime.now().strftime("%Y-%m-%d,%H:%M:%S")
     if os.name == "nt":
         ts = ts.replace(":", "-")

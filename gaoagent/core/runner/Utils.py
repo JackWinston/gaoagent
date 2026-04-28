@@ -391,10 +391,10 @@ def load_history(session_id: str) -> list[dict[str, Any]] | None:
     返回:
     - 历史记录列表，如果不存在则返回 None。
     """
-    root = try_project_root_dir()
-    if root is None:
+    cfg_dir = project_config_dir()
+    if cfg_dir is None:
         return None
-    history_dir = project_config_dir / "history"
+    history_dir = cfg_dir / "history"
     history_file = history_dir / f"{session_id}.json"
     if not history_file.exists() or not history_file.is_file():
         return None
@@ -411,10 +411,10 @@ def save_history(session_id: str, history: list[dict[str, Any]]) -> None:
     """
     保存历史记录。
     """
-    root = try_project_root_dir()
-    if root is None:
+    cfg_dir = project_config_dir()
+    if cfg_dir is None:
         return
-    history_dir = project_config_dir / "history"
+    history_dir = cfg_dir / "history"
     history_dir.mkdir(parents=True, exist_ok=True)
     history_file = history_dir / f"{session_id}.json"
     tmp_path = history_file.with_name(f"{history_file.name}.tmp")

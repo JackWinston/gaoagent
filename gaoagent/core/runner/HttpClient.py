@@ -41,7 +41,7 @@ class OpenAICompatibleHttpClient:
     - 封装 OpenAI Chat Completions 接口的 HTTP 调用.
     
     """
-    def __init__(self, *, base_url: str, api_key: str, timeout_s: int = 60) -> None:
+    def __init__(self, *, base_url: str, api_key: str, timeout_s: int = 240) -> None:
         """
         创建一个兼容 OpenAI Chat Completions 接口的 HTTP 客户端。
 
@@ -82,7 +82,7 @@ class OpenAICompatibleHttpClient:
     def post_chat_completions(
         self,
         model: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         tool_choice: Any | None = None,
         step: int | None = None,
@@ -165,6 +165,7 @@ class OpenAICompatibleHttpClient:
                 if "text/event-stream" in content_type.lower():
                     message: dict[str, Any] = {"role": "assistant"}
                     text_parts: list[str] = []
+                    reasoning_parts: list[str] = []
                     finish_reason: str | None = None
                     tool_call_map: dict[int, dict[str, Any]] = {}
 
@@ -204,20 +205,11 @@ class OpenAICompatibleHttpClient:
                         if isinstance(content, str) and content:
                             text_parts.append(content)
 
-                        legacy_fc = delta.get("function_call")
-                        if isinstance(legacy_fc, dict):
-                            tool_calls_delta = [
-                                {
-                                    "index": 0,
-                                    "type": "function",
-                                    "function": {
-                                        "name": legacy_fc.get("name"),
-                                        "arguments": legacy_fc.get("arguments"),
-                                    },
-                                }
-                            ]
-                        else:
-                            tool_calls_delta = delta.get("tool_calls")
+                        reasoning_content = delta.get("reasoning_content")
+                        if isinstance(reasoning_content, str) and reasoning_content:
+                            reasoning_parts.append(reasoning_content)
+
+                        tool_calls_delta = delta.get("tool_calls")
 
                         if isinstance(tool_calls_delta, list) and tool_calls_delta:
                             for item in tool_calls_delta:
@@ -251,6 +243,9 @@ class OpenAICompatibleHttpClient:
                     content_text = "".join(text_parts)
                     if content_text:
                         message["content"] = content_text
+                    reasoning_text = "".join(reasoning_parts)
+                    if reasoning_text:
+                        message["reasoning_content"] = reasoning_text
 
                     if tool_call_map:
                         tool_calls: list[dict[str, Any]] = []
@@ -292,6 +287,7 @@ class OpenAICompatibleHttpClient:
                                 "status": int(status) if isinstance(status, int) else None,
                                 "finish_reason": finish_reason,
                                 "has_tool_calls": bool(tool_call_map),
+                                "reasoning_preview": summarize(reasoning_text, 240),
                                 "content_preview": summarize(content_text, 240),
                             }
                         )
@@ -328,6 +324,17 @@ class OpenAICompatibleHttpClient:
                             "step": step,
                             "status": int(status) if isinstance(status, int) else None,
                             "json_parsed": isinstance(parsed, dict),
+                            "has_reasoning_content": (
+                                isinstance(parsed, dict)
+                                and isinstance(parsed.get("choices"), list)
+                                and bool(parsed.get("choices"))
+                                and isinstance(parsed["choices"][0], dict)
+                                and isinstance(parsed["choices"][0].get("message"), dict)
+                                and isinstance(
+                                    parsed["choices"][0]["message"].get("reasoning_content"),
+                                    str,
+                                )
+                            ),
                             "body_preview": summarize(parsed if isinstance(parsed, dict) else text, 240),
                         }
                     )

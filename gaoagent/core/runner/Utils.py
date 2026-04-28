@@ -553,7 +553,7 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
     解析约定：
     - 网络/HTTP 失败：返回 decision="final"，content 为可读错误摘要。
     - 响应体非 JSON 对象：返回 decision="retry"，提示上层重试。
-    - 协议 type="tool_calls"：返回 decision="function_call"。
+    - 协议 type="tool_calls"：返回 decision="tool_calls"。
     - 协议 type="thought"：返回 decision="thought"。
     - 协议 type="final"：返回 decision="final"。
     - 协议 type="retry"：返回 decision="retry"。
@@ -664,8 +664,8 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
                 calls.append(call)
 
         return StepResult(
-            decision="function_call",
-            function_call=calls,
+            decision="tool_calls",
+            tool_calls=calls,
             raw={"payload": payload, "protocol": protocol},
         )
 

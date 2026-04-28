@@ -7,7 +7,7 @@ from gaoagent.core.runner.Tooling import ToolRegistry
 from gaoagent.core.runner.Utils import load_request_base_info
 
 Mode = Literal["plan", "react", "retry"]
-Decision = Literal["final", "function_call", "thought", "retry"]
+Decision = Literal["final", "tool_calls", "thought", "retry"]
 
 
 @dataclass
@@ -59,14 +59,14 @@ class StepResult:
     每一步决策的结果.
 
     param decision: 决策的内容, 包括是调用工具还是返回最终结果等信息.
-    param function_call: 如果决策是调用工具, 则这个字段包含要调用的工具的信息. 否则为 None.
+    param tool_calls: 如果决策是调用工具, 则这个字段包含要调用的工具的信息. 否则为 None.
     param content: 决策的文本内容, 例如助手的回复或者思考的内容等. 只有当 decision="thought" 或者 decision="final" 时才有意义.
     param raw: 决策的原始信息, 返回的内容.
 
     """
 
     decision: Decision
-    function_call: list[dict[str, Any]] | None = None
+    tool_calls: list[dict[str, Any]] | None = None
     content: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 

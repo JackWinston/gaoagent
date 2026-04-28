@@ -103,9 +103,18 @@ class ReActRunner(BaseRunner):
         )
 
     @staticmethod
-    def _print_live_llm_response(step: int, decision: str, content: str | None = None) -> None:
+    def _print_live_llm_response(
+        step: int,
+        decision: str,
+        content: str | None = None,
+        reasoning_content: str | None = None,
+    ) -> None:
         """在终端输出本轮 LLM 返回摘要。"""
-        if decision == "function_call":
+        if isinstance(reasoning_content, str) and reasoning_content.strip():
+            Console.info(
+                f"第{step}步: 推理内容 : {reasoning_content.strip()}"
+            )
+        if decision == "tool_calls":
             Console.info(f"第{step}步: 收到响应 : 准备调工具")
             return
         if decision == "thought":
@@ -194,7 +203,7 @@ class ReActRunner(BaseRunner):
         - 组装本轮会话上下文（system prompt + user question）。
         - 决定本轮可用工具集合（内置工具 + MCP 导出工具）。
         - 在 step 循环中执行 ReAct 协议：
-          - 让 LLM 决策（`final` / `thought` / `function_call` / `retry`）。
+          - 让 LLM 决策（`final` / `thought` / `tool_calls` / `retry`）。
           - 若是工具调用，则执行工具并将 observation 回填到历史。
           - 若是最终答案，则结束并返回。
         - 在关键异常场景下快速失败，避免静默降级造成“看似成功、实际不可用”。
@@ -227,7 +236,7 @@ class ReActRunner(BaseRunner):
         4) 进入逐步推理循环（1..max_steps）
            - 调用 `decide()`（内部即 `_callLLM()`）获取当前 StepResult。
            - 按决策类型分支：
-             - `function_call`:
+            - `tool_calls`:
                - 规范化 tool call（补齐 call id、校验参数类型）。
                - 先写入 assistant 的 `tool_calls` 消息，再逐个执行工具。
                - 工具路由优先级：本地 ToolRegistry > MCP 导出工具 > Unknown tool 错误。
@@ -390,12 +399,26 @@ class ReActRunner(BaseRunner):
             if run_logger is not None:
                 run_logger.log_event("step_result", now_step, step=step)
 
-            if now_step.decision == "function_call":
-                calls = now_step.function_call or []
+            payload = now_step.raw.get("payload") if isinstance(now_step.raw, dict) else None
+            first_choice = (
+                payload.get("choices")[0]
+                if isinstance(payload, dict)
+                and isinstance(payload.get("choices"), list)
+                and payload.get("choices")
+                and isinstance(payload.get("choices")[0], dict)
+                else {}
+            )
+            payload_message = (
+                first_choice.get("message") if isinstance(first_choice.get("message"), dict) else {}
+            )
+            reasoning_content = payload_message.get("reasoning_content")
+
+            if now_step.decision == "tool_calls":
+                calls = now_step.tool_calls or []
                 Console.debug(
                     safe_json_dumps(
                         {
-                            "event": "step_function_call_enter",
+                            "event": "step_tool_calls_enter",
                             "step": step,
                             "call_count": len(calls),
                         }
@@ -427,20 +450,21 @@ class ReActRunner(BaseRunner):
                         }
                     )
 
-                self.runner_context.history.append(
-                    {
-                        "role": "assistant",
-                        "content": None,
-                        "tool_calls": [
-                            {
-                                "id": call["id"],
-                                "type": call["type"],
-                                "function": call["function"],
-                            }
-                            for call in normalized_calls
-                        ],
-                    }
-                )
+                assistant_message: dict[str, Any] = {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": call["id"],
+                            "type": call["type"],
+                            "function": call["function"],
+                        }
+                        for call in normalized_calls
+                    ],
+                }
+                if isinstance(reasoning_content, str) and reasoning_content:
+                    assistant_message["reasoning_content"] = reasoning_content
+                self.runner_context.history.append(assistant_message)
 
                 if not self.runner_config.tools:
                     Console.fatal("工具系统没准备好：没找到可用的 ToolRegistry。")
@@ -589,9 +613,10 @@ class ReActRunner(BaseRunner):
                     assistant_content = str(content) if content is not None else ""
                 else:
                     assistant_content = now_step.content or ""
-                self.runner_context.history.append(
-                    {"role": "assistant", "content": assistant_content}
-                )
+                assistant_message = {"role": "assistant", "content": assistant_content}
+                if isinstance(reasoning_content, str) and reasoning_content:
+                    assistant_message["reasoning_content"] = reasoning_content
+                self.runner_context.history.append(assistant_message)
                 Console.info(
                     f"第{step}步: 思考中 : {summarize(assistant_content, 240)}"
                 )
@@ -614,9 +639,10 @@ class ReActRunner(BaseRunner):
                     assistant_content = safe_json_dumps(
                         {"type": "final", "content": now_step.content or ""}
                     )
-                self.runner_context.history.append(
-                    {"role": "assistant", "content": assistant_content}
-                )
+                assistant_message = {"role": "assistant", "content": assistant_content}
+                if isinstance(reasoning_content, str) and reasoning_content:
+                    assistant_message["reasoning_content"] = reasoning_content
+                self.runner_context.history.append(assistant_message)
                 Console.debug(
                     safe_json_dumps(
                         {
@@ -652,7 +678,7 @@ class ReActRunner(BaseRunner):
 
         返回:
         - StepResult:
-          - 正常路径：返回解析后的 `thought` / `function_call` / `final`。
+          - 正常路径：返回解析后的 `thought` / `tool_calls` / `final`。
           - 异常协议路径：若持续 `retry` 到上限，返回 `decision="final"` 的失败说明。
 
         具体流程:
@@ -736,8 +762,24 @@ class ReActRunner(BaseRunner):
             )
             step_result = parse_llm_response(response)
             last_step = step_result
+            payload = step_result.raw.get("payload") if isinstance(step_result.raw, dict) else None
+            first_choice = (
+                payload.get("choices")[0]
+                if isinstance(payload, dict)
+                and isinstance(payload.get("choices"), list)
+                and payload.get("choices")
+                and isinstance(payload.get("choices")[0], dict)
+                else {}
+            )
+            payload_message = (
+                first_choice.get("message") if isinstance(first_choice.get("message"), dict) else {}
+            )
+            reasoning_content = payload_message.get("reasoning_content")
             self._print_live_llm_response(
-                ctx.step, step_result.decision, step_result.content
+                ctx.step,
+                step_result.decision,
+                step_result.content,
+                reasoning_content if isinstance(reasoning_content, str) else None,
             )
             Console.debug(
                 safe_json_dumps(

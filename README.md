@@ -143,18 +143,20 @@ gaoagent chat --prompt "你好"
 gaoagent chat --api openai --model gpt-4.1 --context-size 20
 ```
 
-#### `gaoagent task [question] --mode <plan|react|retry>`
+#### `gaoagent task [question] --mode <plan|react|retry> [--id <session_id>]`
 
 创建并运行任务。
 
 - `question` 可省略，省略时进入交互输入
 - `--mode` 默认 `react`
+- `--id` 传入时，可以导入或保存以该 id 命名的历史对话记录（`.gaoagent/history/<session_id>.json`）
 
 示例：
 
 ```bash
 gaoagent task "生成接口文档"
 gaoagent task --mode react "帮我重构这个模块"
+gaoagent task --id session_1 "继续刚才的工作"
 gaoagent task
 ```
 

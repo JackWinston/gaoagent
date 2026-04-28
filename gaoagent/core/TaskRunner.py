@@ -47,7 +47,7 @@ class TaskRunner:
         self._cfg = config or RunnerConfig()
         self._tools = tools or default_tool_registry()
 
-    def run(self, question: str, mode: str) -> None:
+    def run(self, question: str, mode: str, id: str | None = None) -> None:
         """执行一次任务并将最终结果输出到终端。
 
         流程:
@@ -62,6 +62,7 @@ class TaskRunner:
         参数:
         - `question`: 用户任务描述。
         - `mode`: 期望运行模式字符串。
+        - `id`: 会话ID，用于导入和保存历史记录。
 
         返回:
         - `None`。该方法面向 CLI，采用命令式输出而非返回结构化对象。
@@ -74,11 +75,11 @@ class TaskRunner:
                 m = "react"
 
             if m == "plan":
-                result = ReActRunner(config=self._cfg, tools=self._tools).run(question)
+                result = ReActRunner(config=self._cfg, tools=self._tools).run(question, id=id)
             elif m == "retry":
-                result = ReActRunner(config=self._cfg, tools=self._tools).run(question)
+                result = ReActRunner(config=self._cfg, tools=self._tools).run(question, id=id)
             else:
-                result = ReActRunner(config=self._cfg, tools=self._tools).run(question)
+                result = ReActRunner(config=self._cfg, tools=self._tools).run(question, id=id)
         finally:
             reset_current_run_logger(token)
 

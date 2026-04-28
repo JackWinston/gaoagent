@@ -91,7 +91,7 @@ class CoreHandlers:
         """
         Console.debug(f"CoreHandlers.chat , new={new}, prompt={prompt}, api={api}, model={model}, context_size={context_size}")
 
-    def task(self,question:str,mode:str) -> None:
+    def task(self,question:str,mode:str,id:str|None=None) -> None:
         """任务执行入口：将问题交给 TaskRunner 执行并输出结果。
 
         作用:
@@ -101,12 +101,13 @@ class CoreHandlers:
         参数:
         - `question`: 用户任务描述，最终作为 Runner 的输入问题。
         - `mode`: 运行模式字符串（如 `react` / `plan` / `retry`）。
+        - `id`: 会话ID，用于历史记录。
 
         调用链:
-        - `CoreHandlers.task()` -> `TaskRunner.run(question, mode)` ->
-          `ReActRunner.run(question)`（当前三个模式均落到 ReActRunner）。
+        - `CoreHandlers.task()` -> `TaskRunner.run(question, mode, id)` ->
+          `ReActRunner.run(question, id)`（当前三个模式均落到 ReActRunner）。
 
         返回:
         - `None`。任务结果通过终端输出反馈给用户。
         """
-        TaskRunner().run(question,mode)
+        TaskRunner().run(question,mode,id=id)

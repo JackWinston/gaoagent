@@ -384,6 +384,47 @@ def write_mcp_tools_cache_for_current_scope(payload: dict[str, Any]) -> None:
     tmp_path.replace(cache_path)
 
 
+def load_history(session_id: str) -> list[dict[str, Any]] | None:
+    """
+    加载历史记录。
+    
+    返回:
+    - 历史记录列表，如果不存在则返回 None。
+    """
+    root = try_project_root_dir()
+    if root is None:
+        return None
+    history_dir = project_config_dir / "history"
+    history_file = history_dir / f"{session_id}.json"
+    if not history_file.exists() or not history_file.is_file():
+        return None
+    try:
+        payload = json.loads(history_file.read_text(encoding="utf-8"))
+        if isinstance(payload, list):
+            return payload
+    except Exception:
+        pass
+    return None
+
+
+def save_history(session_id: str, history: list[dict[str, Any]]) -> None:
+    """
+    保存历史记录。
+    """
+    root = try_project_root_dir()
+    if root is None:
+        return
+    history_dir = project_config_dir / "history"
+    history_dir.mkdir(parents=True, exist_ok=True)
+    history_file = history_dir / f"{session_id}.json"
+    tmp_path = history_file.with_name(f"{history_file.name}.tmp")
+    tmp_path.write_text(
+        json.dumps(history, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    tmp_path.replace(history_file)
+
+
 def load_skills() -> dict[str, Any] | None:
     """
     加载技能元数据索引（用于提示词注入与能力展示）。

@@ -193,7 +193,7 @@ class ReActRunner(BaseRunner):
         """
         return self._callLLM(ctx)
 
-    def run(self, question: str, shared_memory: dict[str, Any] | None = None) -> RunResult:
+    def run(self, question: str, id: str | None = None, shared_memory: dict[str, Any] | None = None) -> RunResult:
         """执行一次完整的 ReAct 推理回合（主控循环）。
 
         这个方法是 Runner 的“编排入口”，负责把一次用户问题从“输入文本”
@@ -210,6 +210,7 @@ class ReActRunner(BaseRunner):
 
         参数:
         - question: 用户输入问题。必须是非空字符串；空值会被直接拒绝。
+        - id: 传入的历史会话ID，若有则导入并在此基础上继续。
         - shared_memory: 预留参数，当前实现未消费（用于未来跨轮共享记忆扩展）。目前,本轮的记忆是存在在 `RunnerContext` 中的,并未做本地持久化 , 后续版本可能会考虑添加本地持久化功能,并把 `shared_memory` 作为参数传递给 `decide()` 方法。
 
         返回:
@@ -354,19 +355,31 @@ class ReActRunner(BaseRunner):
                 ),
             )
 
+        from gaoagent.core.runner.Utils import load_history, save_history
+
         # 添加系统提示词
         tool_names = (self.runner_config.tools.list_names() if self.runner_config.tools else [])
         # 将 MCP 导出工具名加入可调用工具清单，避免与内置工具重名。
         if isinstance(mcp_exported_map, dict) and mcp_exported_map:
             tool_names = list(tool_names) + sorted([str(x) for x in mcp_exported_map.keys()])
-        self.runner_context.history.append(
-            {
-                "role": "system",
-                "content": build_system_prompt(
-                    mode=self.mode, tool_names=tool_names
-                ),
-            }
-        )
+
+        system_message = {
+            "role": "system",
+            "content": build_system_prompt(
+                mode=self.mode, tool_names=tool_names
+            ),
+        }
+
+        loaded_history = load_history(id) if id else None
+        if loaded_history:
+            if loaded_history and loaded_history[0].get("role") == "system":
+                loaded_history[0] = system_message
+            else:
+                loaded_history.insert(0, system_message)
+            self.runner_context.history = loaded_history
+        else:
+            self.runner_context.history.append(system_message)
+
         # 添加用户的提问
         self.runner_context.history.append({"role": "user", "content": question})
 
@@ -468,6 +481,8 @@ class ReActRunner(BaseRunner):
 
                 if not self.runner_config.tools:
                     Console.fatal("工具系统没准备好：没找到可用的 ToolRegistry。")
+                    if id:
+                        save_history(id, self.runner_context.history)
                     return RunResult(success=False, error="No tool registry configured")
 
                 for call in normalized_calls:
@@ -652,9 +667,13 @@ class ReActRunner(BaseRunner):
                         }
                     )
                 )
+                if id:
+                    save_history(id, self.runner_context.history)
                 return RunResult(success=True, final_result=now_step.content)
 
         Console.fatal("任务跑到最大步数了，还没拿到最终结果。")
+        if id:
+            save_history(id, self.runner_context.history)
         return RunResult(success=False, error="Max steps reached")
 
     def _callLLM(self, ctx: RunnerContext) -> StepResult:

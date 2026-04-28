@@ -118,13 +118,14 @@ class BaseRunner:
         """
         raise NotImplementedError("BaseRunner 是一个抽象类, 请实现 decide 方法")
 
-    def run(self, question: str) -> RunResult:
+    def run(self, question: str, id: str | None = None) -> RunResult:
         """run 方法。
         
         - 这个类一般是一个循环, 用于处理用户的问题并生成回复.
         
         参数:
         - question: 用户的初始问题
+        - id: 会话ID，用于导入和保存历史记录
         
         返回:
         - RunResult: 返回任务的运行结果, 包括是否成功完成, 最终结果, 错误信息等.

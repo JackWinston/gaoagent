@@ -39,14 +39,19 @@ from gaoagent.router import dispatch
         "示例：gaoagent --task \"重构登录模块\" --mode plan"
     ),
 )
+@click.option(
+    "--id",
+    type=str,
+    help="指定会话ID，用于导入和保存历史记录",
+)
 @click.pass_context
-def cli(ctx: click.Context, task_question: str | None, mode: str) -> None:
+def cli(ctx: click.Context, task_question: str | None, mode: str, id: str | None = None) -> None:
     """
     CLI 根命令入口。
 
     用法：
     - gaoagent [子命令] [参数]
-    - gaoagent --task "任务描述" [--mode react|plan|retry]
+    - gaoagent --task "任务描述" [--mode react|plan|retry] [--id session_id]
 
     说明：
     - 支持 `--task` 快捷模式：无需显式输入 `task` 子命令即可直接执行任务。
@@ -56,10 +61,11 @@ def cli(ctx: click.Context, task_question: str | None, mode: str) -> None:
     - ctx: Click 上下文对象（用于命令分发上下文，不直接参与业务逻辑）。
     - task_question: 任务文本；非空时直接触发 `dispatch("task", ...)`。
     - mode: 任务运行模式，可选 `react/plan/retry`。
+    - id: 会话ID，用于历史记录。
     """
     q = (task_question or "").strip()
     if q:
-        dispatch("task", question=q, mode=mode)
+        dispatch("task", question=q, mode=mode, id=id)
         return
 
 
@@ -189,22 +195,29 @@ def chat_cmd(
         "示例：gaoagent task --mode plan \"设计数据库表结构\""
     ),
 )
-def task_cmd(question: str | None, mode: str) -> None:
+@click.option(
+    "--id",
+    type=str,
+    help="指定会话ID，用于导入和保存历史记录",
+)
+def task_cmd(question: str | None, mode: str, id: str | None = None) -> None:
     """
     创建并运行一个任务。
 
     - question: 任务描述（可省略，省略时会进入交互式输入）
     - mode: 执行模式（plan/react/retry）目前只实现了 react 模式。
+    - id: 会话ID，用于历史记录。
 
     用法：
     - gaoagent task "帮我重构这个模块"
     - gaoagent task --mode react "先做方案设计"
+    - gaoagent task --id session_1 "继续开发"
     - gaoagent task   （不传 question 时会提示输入）
     """
     q = (question or "").strip()
     if not q:
         q = Console.prompt("请输入任务", type=str).strip()
-    dispatch("task", question=q, mode=mode)
+    dispatch("task", question=q, mode=mode, id=id)
 
 
 @cli.group(

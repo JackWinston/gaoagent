@@ -436,6 +436,56 @@ def save_history(session_id: str, history: list[dict[str, Any]]) -> None:
     tmp_path.replace(history_file)
 
 
+def load_runner_state(session_id: str, runner_type: str) -> dict[str, Any] | None:
+    """
+    加载高层执行器（如 PlanAndExecuteRunner、ReflectionRunner）的状态。
+    
+    参数:
+    - session_id: 会话ID。
+    - runner_type: 执行器类型（如 "plan", "reflection"）。
+    
+    返回:
+    - 状态字典，如果不存在或解析失败则返回 None。
+    """
+    cfg_dir = project_config_dir()
+    if cfg_dir is None:
+        return None
+    state_dir = cfg_dir / "history"
+    state_file = state_dir / f"{session_id}_{runner_type}_state.json"
+    if not state_file.exists() or not state_file.is_file():
+        return None
+    try:
+        payload = json.loads(state_file.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        pass
+    return None
+
+
+def save_runner_state(session_id: str, runner_type: str, state: dict[str, Any]) -> None:
+    """
+    保存高层执行器（如 PlanAndExecuteRunner、ReflectionRunner）的状态。
+    
+    参数:
+    - session_id: 会话ID。
+    - runner_type: 执行器类型（如 "plan", "reflection"）。
+    - state: 要保存的状态字典。
+    """
+    cfg_dir = project_config_dir()
+    if cfg_dir is None:
+        return
+    state_dir = cfg_dir / "history"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_file = state_dir / f"{session_id}_{runner_type}_state.json"
+    tmp_path = state_file.with_name(f"{state_file.name}.tmp")
+    tmp_path.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    tmp_path.replace(state_file)
+
+
 def load_skills() -> dict[str, Any] | None:
     """
     加载技能元数据索引（用于提示词注入与能力展示）。

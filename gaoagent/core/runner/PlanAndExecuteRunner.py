@@ -52,20 +52,39 @@ class PlanAndExecuteRunner(BaseRunner):
             api_key=self.request_base_info.api_key,
         )
 
-        Console.info("正在为任务制定初始计划...")
-        plan = self._generate_plan(question)
-        if not plan:
-            Console.fatal("制定计划失败或返回为空。")
-            return RunResult(success=False, error="Failed to generate plan.")
-
-        Console.info(f"成功制定了包含 {len(plan)} 个步骤的计划：")
-        for i, step in enumerate(plan):
-            Console.info(f"  步骤 {i+1}: {step}")
-
-        completed_tasks: list[dict[str, Any]] = []
+        from gaoagent.core.runner.Utils import load_runner_state, save_runner_state
+        
+        state = None
+        if id:
+            state = load_runner_state(id, "plan")
+        
+        if state and state.get("question") == question:
+            plan = state.get("plan", [])
+            completed_tasks = state.get("completed_tasks", [])
+            Console.info(f"从会话 {id} 恢复了任务计划，剩余 {len(plan)} 个步骤，已完成 {len(completed_tasks)} 个子任务。")
+        else:
+            Console.info("正在为任务制定初始计划...")
+            plan = self._generate_plan(question)
+            if not plan:
+                Console.fatal("制定计划失败或返回为空。")
+                return RunResult(success=False, error="Failed to generate plan.")
+    
+            Console.info(f"成功制定了包含 {len(plan)} 个步骤的计划：")
+            for i, step in enumerate(plan):
+                Console.info(f"  步骤 {i+1}: {step}")
+    
+            completed_tasks: list[dict[str, Any]] = []
 
         while plan:
-            current_task = plan.pop(0)
+            current_task = plan[0]
+            if id:
+                save_runner_state(id, "plan", {
+                    "question": question,
+                    "plan": plan,
+                    "completed_tasks": completed_tasks
+                })
+            plan.pop(0)
+
             Console.info(f"\n>>> 开始执行子任务: {current_task}")
 
             # 组装给 ReActRunner 的提示词
@@ -103,6 +122,8 @@ class PlanAndExecuteRunner(BaseRunner):
                 if replan_decision.get("is_finished"):
                     final_ans = replan_decision.get("final_answer", "任务已全部完成。")
                     Console.info(f"评估结果: 任务彻底完成。总结: {final_ans}")
+                    if id:
+                        save_runner_state(id, "plan", {})
                     return RunResult(success=True, final_result=final_ans)
                 else:
                     new_plan = replan_decision.get("new_plan", [])
@@ -113,6 +134,8 @@ class PlanAndExecuteRunner(BaseRunner):
                             Console.info(f"  新增步骤 {i+1}: {step}")
                     else:
                         Console.info("评估结果: 任务彻底完成 (未提供新计划)。")
+                        if id:
+                            save_runner_state(id, "plan", {})
                         return RunResult(success=True, final_result=replan_decision.get("final_answer", "任务已完成。"))
             else:
                 # 评估是否需要调整后续计划
@@ -122,6 +145,8 @@ class PlanAndExecuteRunner(BaseRunner):
                 if replan_decision.get("is_finished"):
                     final_ans = replan_decision.get("final_answer", "任务已提前完成。")
                     Console.info(f"评估结果: 总目标已提前完成。总结: {final_ans}")
+                    if id:
+                        save_runner_state(id, "plan", {})
                     return RunResult(success=True, final_result=final_ans)
                 
                 if replan_decision.get("need_adjust"):
@@ -133,6 +158,8 @@ class PlanAndExecuteRunner(BaseRunner):
                 else:
                     Console.info("评估结果: 不需要调整计划，继续按原计划执行。")
 
+        if id:
+            save_runner_state(id, "plan", {})
         return RunResult(success=True, final_result="所有计划执行完毕。")
 
     def _generate_plan(self, question: str) -> list[str]:

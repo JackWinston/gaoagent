@@ -40,15 +40,40 @@ class ReflectionRunner(BaseRunner):
         """
         raise NotImplementedError("ReflectionRunner 使用自定义调度循环，不使用 decide() 方法。")
 
-    def reflect(self, question: str, result: RunResult, id: str | None = None) -> RunResult:
+    def reflect(self, question: str, result: RunResult, id: str | None = None, state: dict | None = None) -> RunResult:
         """
         核心反思流程：接受原始问题和初次执行结果，评估是否完成。
         如果未完成，则基于反思建议让 target_runner 重新执行。
         """
+        from gaoagent.core.runner.Utils import save_runner_state
+
         current_question = question
         last_result = result
+        start_attempt = 0
 
-        for attempt in range(self.max_reflections):
+        if state:
+            current_question = state.get("current_question", question)
+            last_result_dict = state.get("last_result", {})
+            last_result = RunResult(
+                success=last_result_dict.get("success", False),
+                error=last_result_dict.get("error", ""),
+                final_result=last_result_dict.get("final_result", "")
+            )
+            start_attempt = state.get("attempt", 0)
+
+        for attempt in range(start_attempt, self.max_reflections):
+            if id:
+                save_runner_state(id, "reflection", {
+                    "original_question": question,
+                    "current_question": current_question,
+                    "last_result": {
+                        "success": last_result.success,
+                        "error": last_result.error,
+                        "final_result": last_result.final_result
+                    },
+                    "attempt": attempt
+                })
+
             Console.info(f"\n>>> [Reflection] 正在评估任务是否已彻底完成 (反思轮次 {attempt + 1})...")
             evaluation = self._evaluate_result(question, last_result)
             
@@ -59,6 +84,8 @@ class ReflectionRunner(BaseRunner):
                 Console.info(f"[Reflection] 评估结果: 任务已彻底完成。总结: {feedback}")
                 if last_result.success and feedback:
                     last_result.final_result = f"{last_result.final_result}\n\n[最终评估结论]: {feedback}"
+                if id:
+                    save_runner_state(id, "reflection", {})
                 return last_result
             else:
                 Console.warn(f"[Reflection] 评估结果: 任务尚未彻底完成。反馈意见: {feedback}")
@@ -78,6 +105,8 @@ class ReflectionRunner(BaseRunner):
                 else:
                     Console.warn("[Reflection] 已达到最大反思重试次数，结束反思。")
 
+        if id:
+            save_runner_state(id, "reflection", {})
         return last_result
 
     def run(self, question: str, id: str | None = None) -> RunResult:
@@ -95,6 +124,15 @@ class ReflectionRunner(BaseRunner):
         )
 
         Console.info(f"\n>>> [Reflection] 开始执行初始任务...")
+        
+        from gaoagent.core.runner.Utils import load_runner_state
+        
+        state = load_runner_state(id, "reflection") if id else None
+        
+        if state and state.get("original_question") == question:
+            Console.info(f"从会话 {id} 恢复了反思状态，继续上次反思过程...")
+            return self.reflect(question, RunResult(success=True), id=id, state=state)
+
         # 1. 获取 target_runner 的初始结果
         initial_result = self.target_runner.run(question, id=id)
         
@@ -102,9 +140,6 @@ class ReflectionRunner(BaseRunner):
         return self.reflect(question, initial_result, id=id)
 
     def _evaluate_result(self, original_question: str, result: RunResult) -> dict[str, Any]:
-        """
-        调用 LLM 评估当前执行状态，并决定是否完成。
-        """
         result_text = result.final_result if result.success else f"执行失败: {result.error}"
         
         prompt = build_reflection_evaluation_prompt(original_question, result_text)

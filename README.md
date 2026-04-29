@@ -127,23 +127,41 @@ gaoagent config
 
 #### `gaoagent chat`
 
-聊天入口（当前以参数透传为主）。
+与 LLM 进行多轮对话，支持持续交互和上下文记忆。
+
+行为说明：
+
+- 不传 `--prompt` 时进入持续交互式聊天循环，输入 `exit` 或按 `Ctrl+C` 退出
+- 传入 `--prompt` 时以单次模式运行：发送一条消息，输出回复后退出
+- 对话历史自动保存在项目级 `.gaoagent/history/chat.json`，下次进入时自动恢复上下文
+- 传入 `--new` 时丢弃已有历史，从空会话开始
+- `--context-size` 控制发送给模型的消息窗口大小，超出时自动裁剪最早的非 system 消息
 
 参数：
 
-- `--new`：开启新会话
-- `--prompt <文本>`：直接发送输入
-- `--api <api_name>`：指定 API
-- `--model <model_name>`：指定模型
-- `--context-size <int>` / `--contextSize <int>`：指定上下文长度
+- `--new`：重置上下文，开启全新会话
+- `--prompt <文本>`：单次模式，发送一条消息后退出
+- `--api <api_name>`：指定已保存的 API 提供方名称
+- `--model <model_name>`：指定模型名称
+- `--context-size <int>` / `--contextSize <int>`：上下文消息窗口大小（消息条数）
 
 示例：
 
 ```bash
+# 进入持续交互式聊天
 gaoagent chat
+
+# 丢弃历史上下文，开启新会话
 gaoagent chat --new
-gaoagent chat --prompt "你好"
-gaoagent chat --api openai --model gpt-4.1 --context-size 20
+
+# 单次发送一条消息
+gaoagent chat --prompt "帮我解释这段代码"
+
+# 指定 API 和模型
+gaoagent chat --api openai --model gpt-4.1
+
+# 限制上下文窗口为最近 20 条消息
+gaoagent chat --context-size 20
 ```
 
 #### `gaoagent task [question] --mode <plan|react|retry> [--id <session_id>]`

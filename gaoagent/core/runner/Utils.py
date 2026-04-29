@@ -260,12 +260,19 @@ def _find_config_file(name: str) -> Path | None:
 
 
 
-def load_request_base_info() -> RequestBaseInfo | None:
+def load_request_base_info(
+    api_name: str | None = None,
+    model_name: str | None = None,
+) -> RequestBaseInfo | None:
     """
-    加载默认 LLM 请求基础信息。
+    加载 LLM 请求基础信息。
 
     配置来源:
     - `.gaoagent/gao_client_api_config.json`
+
+    参数:
+    - api_name: 指定 API 名称，为空时使用 default_api 或第一个可用 API。
+    - model_name: 指定模型名称，为空时使用 default_model 或该 API 下第一个可用模型。
 
     容错策略:
     - `default_api` 缺失或非法时，回退到第一个可用 API；
@@ -289,26 +296,30 @@ def load_request_base_info() -> RequestBaseInfo | None:
 
     apis = config.get("apis", {})
 
-    # ===================== 1. 处理 default_api 缺失 =====================
-    default_api = config.get("default_api")
-    if not default_api or default_api not in apis:
-        # 兜底：取第一个 API
-        if not apis:
-            return None
-        default_api = next(iter(apis.keys()))
+    # ===================== 1. 确定 API =====================
+    if api_name and api_name in apis:
+        default_api = api_name
+    else:
+        default_api = config.get("default_api")
+        if not default_api or default_api not in apis:
+            if not apis:
+                return None
+            default_api = next(iter(apis.keys()))
 
     api_config = apis[default_api]
     api_key = api_config.get("api_key", "")
     base_url = api_config.get("base_url", "")
     models = api_config.get("models", {})
 
-    # ===================== 2. 处理 default_model 缺失 =====================
-    default_model = config.get("default_model")
-    if not default_model or default_model not in models:
-        # 兜底：取第一个模型
-        if not models:
-            return None
-        default_model = next(iter(models.keys()))
+    # ===================== 2. 确定模型 =====================
+    if model_name and model_name in models:
+        default_model = model_name
+    else:
+        default_model = config.get("default_model")
+        if not default_model or default_model not in models:
+            if not models:
+                return None
+            default_model = next(iter(models.keys()))
 
     model_info = models[default_model]
     context_window = model_info.get("context_window", 4096)

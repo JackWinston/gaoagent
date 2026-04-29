@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from gaoagent.core.runner.Console import Console
+from gaoagent.core.ChatRunner import ChatRunner
 from gaoagent.core.CoreConfigDefault import CoreConfigDefault
 from gaoagent.core.CoreInit import CoreInit
 from gaoagent.core.TaskRunner import TaskRunner
@@ -8,24 +11,25 @@ class CoreHandlers:
     """CLI 核心命令处理器（Core 层入口聚合）。
 
     该类在架构中的定位:
-    - 位于 CLI 命令与核心业务模块之间，承担“命令分发 + 参数透传”职责。
+    - 位于 CLI 命令与核心业务模块之间，承担"命令分发 + 参数透传"职责。
     - 自身不承载复杂业务逻辑，主要负责把用户动作路由到对应模块。
     - 通过统一入口降低命令层耦合，便于后续扩展新命令子域。
 
     设计意图:
-    - `CoreHandlers` 作为“薄控制层（thin handler）”，将初始化、配置、任务执行等
-      不同能力聚合到一个稳定的调用面。
+    - `CoreHandlers` 作为"薄控制层（thin handler）"，将初始化、配置、任务执行、
+      聊天等不同能力聚合到一个稳定的调用面。
     - 各方法尽量保持无状态、短路径调用，避免在 Handler 层堆积业务规则，
-      把真正规则下沉到 `CoreInit`、`CoreConfigDefault`、`TaskRunner` 等专职组件。
+      把真正规则下沉到 `CoreInit`、`CoreConfigDefault`、`TaskRunner`、`ChatRunner` 等专职组件。
 
     使用方式:
     - 通常由 CLI 命令注册层实例化后调用，如 `core init` / `core config` / `core task`。
-    - 本类方法以“副作用执行”为主（打印、写配置、触发任务），而不是返回富结果对象。
+    - 本类方法以"副作用执行"为主（打印、写配置、触发任务），而不是返回富结果对象。
 
     边界说明:
     - 不负责模型推理细节，不直接管理 Runner 的 step/history。
     - 不负责持久化协议定义，仅触发对应模块执行。
     """
+
     def init(self) -> None:
        """执行系统初始化流程。
 
@@ -70,26 +74,37 @@ class CoreHandlers:
         model: str | None = None,
         context_size: int | None = None,
     ) -> None:
-        """聊天命令入口（当前为占位实现）。
+        """聊天命令入口：将参数交给 ChatRunner 执行。
 
-        当前行为:
-        - 仅将传入参数打印到终端，便于联调 CLI 参数解析是否正确。
-        - 尚未接入真实对话会话管理与 Runner 编排。
+        调用链:
+        - `CoreHandlers.chat()` -> `ChatRunner().run(new, prompt, api, model, context_size)`
 
-        参数语义:
-        - `new`: 是否开启新会话；`True` 通常表示丢弃旧会话上下文。
-        - `prompt`: 本次输入的用户问题/提示词。
-        - `api`: 目标 API 标识或端点别名（具体解释由上层约定）。
-        - `model`: 指定模型名称。
-        - `context_size`: 期望上下文窗口大小。
+        用法:
+        - `gaoagent chat`：进入持续交互式聊天，输入 exit 退出。
+        - `gaoagent chat --new`：丢弃历史上下文，开启全新会话。
+        - `gaoagent chat --prompt "你好"`：单次发送一条消息并输出结果。
+        - `gaoagent chat --api openai --model gpt-4.1`：指定 API 和模型。
+        - `gaoagent chat --context-size 20`：限制上下文窗口为最近 20 条消息。
+
+        参数:
+        - `new`: 是否重置上下文并开始新会话。为 True 时清空已有历史。
+        - `prompt`: 单次模式的用户输入；传入后发送一条消息即退出。
+          未传时进入持续交互式聊天循环。
+        - `api`: 指定已保存的 API 提供方名称；为空时使用默认 API。
+        - `model`: 指定模型名称；为空时使用默认模型。
+        - `context_size`: 上下文消息窗口大小（消息条数）。
+          超出时自动裁剪最早的非 system 消息。
 
         返回:
-        - `None`。仅做控制台输出，不返回结构化对话结果。
-
-        后续扩展建议:
-        - 可将此方法对齐 `task()` 的执行路径，复用 `TaskRunner` 或会话态 Runner。
+        - `None`。结果通过终端输出反馈给用户。
         """
-        Console.debug(f"CoreHandlers.chat , new={new}, prompt={prompt}, api={api}, model={model}, context_size={context_size}")
+        ChatRunner().run(
+            new=new,
+            prompt=prompt,
+            api=api,
+            model=model,
+            context_size=context_size,
+        )
 
     def task(self,question:str,mode:str,id:str|None=None) -> None:
         """任务执行入口：将问题交给 TaskRunner 执行并输出结果。

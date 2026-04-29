@@ -112,9 +112,10 @@ def config_cmd() -> None:
 @cli.command(
     "chat",
     help=(
-        "进入聊天模式，可指定 API、模型和上下文长度。\n"
+        "与 LLM 进行多轮对话，支持持续交互和上下文记忆。\n"
         "示例：\n"
         "  gaoagent chat\n"
+        "  gaoagent chat --new\n"
         "  gaoagent chat --prompt \"你好\"\n"
         "  gaoagent chat --api openai --model gpt-4.1"
     ),
@@ -122,17 +123,17 @@ def config_cmd() -> None:
 @click.option(
     "--new",
     is_flag=True,
-    help="重置上下文并开始新会话。示例：gaoagent chat --new",
+    help="重置上下文，丢弃已有历史并开启全新会话。示例：gaoagent chat --new",
 )
 @click.option(
     "--prompt",
     type=str,
-    help="直接发送一条用户输入。示例：gaoagent chat --prompt \"帮我解释这段代码\"",
+    help="单次模式：发送一条消息，输出回复后退出。示例：gaoagent chat --prompt \"帮我解释这段代码\"",
 )
 @click.option(
     "--api",
     type=str,
-    help="指定已保存的 API 名称。示例：gaoagent chat --api openai",
+    help="指定已保存的 API 提供方名称。示例：gaoagent chat --api openai",
 )
 @click.option(
     "--model",
@@ -144,7 +145,7 @@ def config_cmd() -> None:
     "--contextSize",
     "context_size",
     type=int,
-    help="指定上下文长度。示例：gaoagent chat --context-size 20",
+    help="上下文消息窗口大小（消息条数），超出时自动裁剪最早的非 system 消息。示例：gaoagent chat --context-size 20",
 )
 def chat_cmd(
     new: bool,
@@ -154,23 +155,24 @@ def chat_cmd(
     context_size: int | None,
 ) -> None:
     """
-    聊天命令入口。
+    聊天命令入口：与 LLM 进行多轮对话。
 
     用法：
-    - gaoagent chat
-    - gaoagent chat --new
-    - gaoagent chat --prompt "你好"
-    - gaoagent chat --api <api_name> --model <model_name> [--context-size 20]
+    - gaoagent chat：进入持续交互式聊天，输入 exit 或 Ctrl+C 退出。
+    - gaoagent chat --new：丢弃历史上下文，开启全新会话。
+    - gaoagent chat --prompt "你好"：单次发送一条消息，输出回复后退出。
+    - gaoagent chat --api <api_name> --model <model_name>：指定 API 和模型。
 
     参数：
     - new: 是否重置上下文并开始新会话。
-    - prompt: 可选用户输入；未传时进入交互式聊天输入。
+    - prompt: 单次模式的用户输入；未传时进入持续交互式聊天循环。
     - api: 指定已保存的 API 提供方名称。
     - model: 指定模型名称。
-    - context_size: 指定上下文窗口长度（消息条数）。
+    - context_size: 上下文消息窗口大小（消息条数）。
 
     行为：
     - 参数会透传给 `dispatch("chat", ...)`，最终由 `CoreHandlers.chat()` 处理。
+    - 对话历史自动保存在 `.gaoagent/history/chat.json`。
     """
     dispatch("chat", new=new, prompt=prompt, api=api, model=model, context_size=context_size)
 

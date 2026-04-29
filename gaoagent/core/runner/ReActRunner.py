@@ -142,14 +142,12 @@ class ReActRunner(BaseRunner):
             Console.info(f"第{step}步: 收到响应 : 准备调工具")
             return
         if decision == "thought":
-            Console.info(
-                f"第{step}步: 思考中 : {summarize(content or '', 220)}"
-            )
+            Console.info(f"第{step}步: 思考中 :")
+            Console.output_llm_result(content or '')
             return
         if decision == "final":
-            Console.info(
-                f"第{step}步: 答案 {summarize(content or '', 220)}"
-            )
+            Console.info(f"第{step}步: 答案 :")
+            Console.output_llm_result(content or '')
             return
         if decision == "retry":
             Console.warn(

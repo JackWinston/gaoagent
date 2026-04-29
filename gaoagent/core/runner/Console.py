@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import click
 from rich.console import Console as RichConsole
 from rich.text import Text
 from rich.theme import Theme
@@ -46,8 +47,10 @@ class Console:
         """输出一条控制台消息。"""
         if err:
             _rich.stderr = True
-            _rich.print(message, end="\n" if nl else "")
-            _rich.stderr = False
+            try:
+                _rich.print(message, end="\n" if nl else "")
+            finally:
+                _rich.stderr = False
         else:
             _rich.print(message, end="\n" if nl else "")
 
@@ -64,7 +67,11 @@ class Console:
     @staticmethod
     def error(message: Any) -> None:
         """输出错误信息（红色，标准错误流）。"""
-        _rich.print(f"[error]{message}[/error]", stderr=True)
+        _rich.stderr = True
+        try:
+            _rich.print(f"[error]{message}[/error]")
+        finally:
+            _rich.stderr = False
 
     @staticmethod
     def weak(message: Any) -> None:
@@ -84,7 +91,11 @@ class Console:
     @staticmethod
     def fatal(message: Any) -> None:
         """输出导致程序终止的错误信息（红色）。"""
-        _rich.print(f"[fatal]{message}[/fatal]", stderr=True)
+        _rich.stderr = True
+        try:
+            _rich.print(f"[fatal]{message}[/fatal]")
+        finally:
+            _rich.stderr = False
 
     @staticmethod
     def debug(message: Any) -> None:
@@ -102,13 +113,34 @@ class Console:
     def prompt(text: Any, *args, **kwargs):
         """交互输入：提示文案使用蓝色。"""
         from rich.prompt import Prompt
-        return Prompt.ask(f"[interaction]{text}[/interaction]", *args, **kwargs)
+        import click
+        
+        # 提取 type 参数
+        param_type = kwargs.pop('type', None)
+        
+        # 如果 type 是 click.Choice，则转换为 choices 参数
+        if isinstance(param_type, click.Choice):
+            kwargs['choices'] = param_type.choices
+            kwargs.setdefault('show_choices', True)
+            # Prompt.ask 的 show_default 参数与 click 的类似
+            result = Prompt.ask(f"[interaction]{text}[/interaction]", **kwargs)
+            return result
+        else:
+            # 其他类型，暂时忽略 type，直接调用 Prompt.ask
+            result = Prompt.ask(f"[interaction]{text}[/interaction]", **kwargs)
+            if param_type is not None and callable(param_type):
+                try:
+                    result = param_type(result)
+                except (ValueError, TypeError):
+                    # 转换失败，返回原始结果
+                    pass
+            return result
 
     @staticmethod
     def confirm(text: Any, *args, **kwargs):
         """交互确认：提示文案使用蓝色。"""
         from rich.prompt import Confirm
-        return Confirm.ask(f"[interaction]{text}[/interaction]", *args, **kwargs)
+        return Confirm.ask(f"[interaction]{text}[/interaction]", **kwargs)
 
     # ========== 流式输出专用方法 ==========
 
@@ -168,6 +200,26 @@ class Console:
         """输出语法高亮代码。"""
         from rich.syntax import Syntax
         _rich.print(Syntax(code, language, theme=theme))
+
+    @staticmethod
+    def output_llm_result(text: str) -> None:
+        """输出 LLM 结果，如果是 JSON 格式 {"type":"final|thought","content":"..."} 则用 markdown 渲染 content。"""
+        import json
+        # 清理可能的 Markdown 代码块
+        cleaned = text.strip()
+        if cleaned.startswith("```json") and cleaned.endswith("```"):
+            cleaned = cleaned[7:-3].strip()
+        elif cleaned.startswith("```") and cleaned.endswith("```"):
+            cleaned = cleaned[3:-3].strip()
+        try:
+            data = json.loads(cleaned, strict=False)
+            if isinstance(data, dict) and data.get("type") in ("final", "thought") and isinstance(data.get("content"), str):
+                Console.markdown(data["content"])
+                return
+        except (json.JSONDecodeError, TypeError):
+            pass
+        # 否则直接输出
+        Console.info(text)
 
 
 def _is_debug_enabled() -> bool:

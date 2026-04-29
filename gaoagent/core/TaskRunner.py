@@ -125,7 +125,7 @@ class TaskRunner:
 
         if result.success:
             if result.final_result:
-                Console.info(result.final_result)
+                Console.output_llm_result(result.final_result)
             return
 
         Console.fatal(f"  任务执行失败：{result.error or '未知错误'}")

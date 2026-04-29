@@ -193,7 +193,7 @@ class ChatRunner:
         if response.ok and response.json:
             content = _extract_content(response.json)
             if content:
-                Console.info(content)
+                Console.output_llm_result(content)
                 history.append({"role": "assistant", "content": content})
             else:
                 Console.warn("模型返回了空内容。")
@@ -260,7 +260,7 @@ class ChatRunner:
             if response.ok and response.json:
                 content = _extract_content(response.json)
                 if content:
-                    Console.info(content)
+                    Console.output_llm_result(content)
                     history.append({"role": "assistant", "content": content})
                 else:
                     Console.warn("模型返回了空内容。")

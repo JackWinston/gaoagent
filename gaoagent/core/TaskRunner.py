@@ -51,7 +51,7 @@ class TaskRunner:
         self._cfg = config or RunnerConfig()
         self._tools = tools or default_tool_registry()
 
-    def run(self, question: str, mode: str, id: str | None = None) -> None:
+    def run(self, question: str, mode: str, id: str | None = None, images: str | None = None) -> None:
         """执行一次任务并将最终结果输出到终端。
 
         流程:
@@ -67,6 +67,7 @@ class TaskRunner:
         - `question`: 用户任务描述。
         - `mode`: 期望运行模式字符串（如 "react", "retry,plan"）。
         - `id`: 会话ID，用于导入和保存历史记录。
+        - `images`: 图片路径列表（逗号分隔），用于多模态输入。
 
         返回:
         - `None`。该方法面向 CLI，采用命令式输出而非返回结构化对象。
@@ -116,7 +117,7 @@ class TaskRunner:
                 
                 runner = ReflectionRunner(target_runner=target, config=self._cfg)
 
-            result = runner.run(question, id=id)
+            result = runner.run(question, id=id, images=images)
         finally:
             reset_current_run_logger(token)
 

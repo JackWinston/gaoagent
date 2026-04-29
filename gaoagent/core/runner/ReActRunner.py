@@ -14,6 +14,8 @@ from gaoagent.core.runner.Console import Console
 from gaoagent.core.runner.HttpClient import OpenAICompatibleHttpClient
 from gaoagent.core.runner.Tooling import ToolCall, ToolRegistry, default_tool_registry
 from gaoagent.core.runner.Utils import (
+    build_multimodal_content,
+    is_image_file,
     load_mcp_servers_raw,
     load_mcp_tools_cache,
     parse_llm_response,
@@ -147,9 +149,15 @@ class ReActRunner(BaseRunner):
     @staticmethod
     def _print_live_tool_result(step: int, tool_name: str, observation: Any) -> None:
         """在终端输出工具调用结果摘要。"""
-        Console.info(
-            f"第{step}步: 工具跑完了 {tool_name} => {summarize(observation, 240)}"
-        )
+        # 多模态格式：提取文本部分用于展示，避免输出大量 base64 数据
+        if isinstance(observation, list):
+            text_parts = [p.get("text", "") for p in observation if isinstance(p, dict) and p.get("type") == "text"]
+            preview = " ".join(text_parts) if text_parts else "[多模态内容]"
+            Console.info(f"第{step}步: 工具跑完了 {tool_name} => {summarize(preview, 240)}")
+        else:
+            Console.info(
+                f"第{step}步: 工具跑完了 {tool_name} => {summarize(observation, 240)}"
+            )
 
     def __init__(
         self,
@@ -193,7 +201,7 @@ class ReActRunner(BaseRunner):
         """
         return self._callLLM(ctx)
 
-    def run(self, question: str, id: str | None = None, shared_memory: dict[str, Any] | None = None) -> RunResult:
+    def run(self, question: str, id: str | None = None, shared_memory: dict[str, Any] | None = None, images: str | None = None) -> RunResult:
         """执行一次完整的 ReAct 推理回合（主控循环）。
 
         这个方法是 Runner 的“编排入口”，负责把一次用户问题从“输入文本”
@@ -381,7 +389,17 @@ class ReActRunner(BaseRunner):
             self.runner_context.history.append(system_message)
 
         # 添加用户的提问
-        self.runner_context.history.append({"role": "user", "content": question})
+        # 解析图片路径
+        image_paths: list[str] = []
+        if images:
+            paths = [p.strip() for p in images.split(",") if p.strip()]
+            for p in paths:
+                if is_image_file(p):
+                    image_paths.append(p)
+
+        # 构建多模态内容
+        user_content = build_multimodal_content(question, image_paths)
+        self.runner_context.history.append({"role": "user", "content": user_content})
 
         for step in range(1, self.runner_config.max_steps + 1):
             # 更新上下文中的 step 信息
@@ -581,31 +599,43 @@ class ReActRunner(BaseRunner):
                                 }
                         except Exception as e:
                             Console.fatal(f"工具调用失败了：{name}，错误：{e}")
-                            observation = safe_json_dumps(
-                                {
-                                    "success": False,
-                                    "error": {"type": type(e).__name__, "message": str(e)},
-                                }
-                            )
+                            observation = {
+                                "success": False,
+                                "error": {"type": type(e).__name__, "message": str(e)},
+                            }
 
+                    # 处理多模态格式的 observation（如 ask_user 工具返回的图片）
+                    if isinstance(observation, list):
+                        # 多模态格式：直接使用 list 作为 content
+                        tool_content = observation
+                    elif isinstance(observation, str):
+                        # 纯文本格式
+                        tool_content = observation
+                    else:
+                        # dict 或其他格式：转换为 JSON 字符串
+                        tool_content = safe_json_dumps(observation)
+                    
                     self.runner_context.history.append(
                         {
                             "role": "tool",
                             "tool_call_id": call["id"],
-                            "content": (
-                                observation
-                                if isinstance(observation, str)
-                                else safe_json_dumps(observation)
-                            ),
+                            "content": tool_content,
                         }
                     )
+                    # 多模态格式：提取文本部分用于日志预览
+                    if isinstance(observation, list):
+                        text_parts = [p.get("text", "") for p in observation if isinstance(p, dict) and p.get("type") == "text"]
+                        observation_preview = summarize(" ".join(text_parts) if text_parts else "[多模态内容]", 180)
+                    else:
+                        observation_preview = summarize(observation, 180)
+                    
                     Console.debug(
                         safe_json_dumps(
                             {
                                 "event": "tool_observation_written",
                                 "step": step,
                                 "tool": name if isinstance(name, str) else "",
-                                "observation_preview": summarize(observation, 180),
+                                "observation_preview": observation_preview,
                             }
                         )
                     )

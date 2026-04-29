@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from gaoagent.core.runner.Console import Console
+from gaoagent.core.runner.Utils import build_multimodal_content, is_image_file
 
 
 def _trim_messages(messages: list[dict[str, Any]], context_size: int | None) -> list[dict[str, Any]]:
@@ -79,6 +80,7 @@ class ChatRunner:
         api: str | None = None,
         model: str | None = None,
         context_size: int | None = None,
+        images: str | None = None,
     ) -> None:
         """聊天命令入口：与 LLM 进行多轮对话。
 
@@ -140,10 +142,10 @@ class ChatRunner:
             history.insert(0, {"role": "system", "content": system_text})
 
         if prompt is not None:
-            self._single(client, base_info.modules, history, prompt, context_size)
+            self._single(client, base_info.modules, history, prompt, context_size, images)
             return
 
-        self._loop(client, base_info.modules, history, context_size)
+        self._loop(client, base_info.modules, history, context_size, images)
 
     def _single(
         self,
@@ -152,6 +154,7 @@ class ChatRunner:
         history: list[dict[str, Any]],
         prompt: str,
         context_size: int | None,
+        images: str | None = None,
     ) -> None:
         """单次聊天模式：发送一条消息，输出回复后退出。
 
@@ -161,6 +164,7 @@ class ChatRunner:
         - history: 当前对话历史（会被就地追加）。
         - prompt: 用户输入文本。
         - context_size: 上下文消息窗口大小。
+        - images: 图片路径列表（逗号分隔），用于多模态输入。
         """
         from gaoagent.core.runner.Utils import save_history
 
@@ -169,7 +173,17 @@ class ChatRunner:
             Console.warn("输入内容为空，跳过。")
             return
 
-        history.append({"role": "user", "content": text})
+        # 解析图片路径
+        image_paths: list[str] = []
+        if images:
+            paths = [p.strip() for p in images.split(",") if p.strip()]
+            for p in paths:
+                if is_image_file(p):
+                    image_paths.append(p)
+
+        # 构建多模态内容
+        user_content = build_multimodal_content(text, image_paths)
+        history.append({"role": "user", "content": user_content})
         Console.interaction("正在请求数据...")
         response = client.post_chat_completions(
             model=model,
@@ -194,6 +208,7 @@ class ChatRunner:
         model: str,
         history: list[dict[str, Any]],
         context_size: int | None,
+        images: str | None = None,
     ) -> None:
         """持续交互式聊天循环。
 
@@ -202,10 +217,20 @@ class ChatRunner:
         - model: 模型名称。
         - history: 当前对话历史（会被就地追加）。
         - context_size: 上下文消息窗口大小。
+        - images: 图片路径列表（逗号分隔），用于多模态输入。
         """
         from gaoagent.core.runner.Utils import save_history
 
         Console.info("进入聊天模式（输入 exit 退出）")
+
+        # 如果有图片，在循环开始前解析一次
+        image_paths: list[str] = []
+        if images:
+            paths = [p.strip() for p in images.split(",") if p.strip()]
+            for p in paths:
+                if is_image_file(p):
+                    image_paths.append(p)
+
         while True:
             try:
                 user_input = Console.prompt("你")
@@ -222,7 +247,9 @@ class ChatRunner:
                 save_history(_SESSION_ID, history)
                 break
 
-            history.append({"role": "user", "content": text})
+            # 构建多模态内容（每轮对话都传递图片）
+            user_content = build_multimodal_content(text, image_paths)
+            history.append({"role": "user", "content": user_content})
 
             Console.interaction("正在请求数据...")
             response = client.post_chat_completions(

@@ -109,7 +109,7 @@ class ReflectionRunner(BaseRunner):
             save_runner_state(id, "reflection", {})
         return last_result
 
-    def run(self, question: str, id: str | None = None) -> RunResult:
+    def run(self, question: str, id: str | None = None, images: str | None = None) -> RunResult:
         if not question or not str(question).strip():
             Console.fatal("问题为空，无法执行 Reflection。")
             return RunResult(success=False, error="Invalid question")
@@ -134,7 +134,7 @@ class ReflectionRunner(BaseRunner):
             return self.reflect(question, RunResult(success=True), id=id, state=state)
 
         # 1. 获取 target_runner 的初始结果
-        initial_result = self.target_runner.run(question, id=id)
+        initial_result = self.target_runner.run(question, id=id, images=images)
         
         # 2. 将 question 和 initial_result 传入 reflect 进行评估和可能的重试
         return self.reflect(question, initial_result, id=id)

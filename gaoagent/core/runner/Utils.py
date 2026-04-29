@@ -13,7 +13,9 @@ Runner 层通用工具模块。
   避免在调用方散落重复实现，确保行为一致、便于演进。
 """
 
+import base64
 import json
+import mimetypes
 import time
 import traceback
 from pathlib import Path
@@ -837,3 +839,167 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
         content=f"LLM 协议错误：未知 type={repr(action_type)}",
         raw={"payload": payload, "protocol": protocol},
     )
+
+
+# 图片处理相关常量
+IMAGE_EXTENSIONS = {
+    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif", ".ico", ".svg"
+}
+
+IMAGE_MIME_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+    ".webp": "image/webp",
+    ".tiff": "image/tiff",
+    ".tif": "image/tiff",
+    ".ico": "image/x-icon",
+    ".svg": "image/svg+xml",
+}
+
+
+def is_image_file(file_path: str) -> bool:
+    """判断文件是否是图片文件。
+
+    参数:
+    - file_path: 文件路径
+
+    返回:
+    - bool: 是图片文件返回True，否则返回False
+    """
+    try:
+        p = Path(file_path)
+        ext = p.suffix.lower()
+        return ext in IMAGE_EXTENSIONS
+    except Exception:
+        return False
+
+
+def get_image_mime_type(file_path: str) -> str:
+    """获取图片文件的MIME类型。
+
+    参数:
+    - file_path: 文件路径
+
+    返回:
+    - str: MIME类型字符串
+    """
+    try:
+        p = Path(file_path)
+        ext = p.suffix.lower()
+        mime = IMAGE_MIME_TYPES.get(ext)
+        if mime:
+            return mime
+        # 尝试使用mimetypes模块猜测
+        guessed, _ = mimetypes.guess_type(str(p))
+        if guessed and guessed.startswith("image/"):
+            return guessed
+        return "image/png"  # 默认返回png
+    except Exception:
+        return "image/png"
+
+
+def image_to_base64_url(file_path: str) -> str | None:
+    """将图片文件转换为base64 data URL。
+
+    参数:
+    - file_path: 图片文件路径
+
+    返回:
+    - str | None: 成功返回data URL字符串，失败返回None
+    """
+    try:
+        p = Path(file_path).expanduser()
+        if not p.is_absolute():
+            p = (Path.cwd() / p).resolve()
+
+        if not p.exists() or not p.is_file():
+            return None
+
+        mime_type = get_image_mime_type(str(p))
+        with open(p, "rb") as f:
+            data = f.read()
+        b64 = base64.b64encode(data).decode("utf-8")
+        return f"data:{mime_type};base64,{b64}"
+    except Exception:
+        return None
+
+
+def parse_images_from_text(text: str) -> list[str]:
+    """从文本中解析图片路径列表。
+
+    支持格式:
+    - images:path1,path2,path3
+    - images: path1, path2, path3
+
+    参数:
+    - text: 包含images标记的文本
+
+    返回:
+    - list[str]: 解析出的图片路径列表（已过滤非图片文件）
+    """
+    if not text or not isinstance(text, str):
+        return []
+
+    lines = text.strip().split("\n")
+    image_paths: list[str] = []
+
+    for line in lines:
+        line = line.strip()
+        if line.startswith("images:"):
+            paths_str = line[len("images:"):].strip()
+            if paths_str:
+                # 支持逗号分隔
+                parts = [p.strip() for p in paths_str.split(",") if p.strip()]
+                for part in parts:
+                    if is_image_file(part):
+                        image_paths.append(part)
+
+    return image_paths
+
+
+def build_multimodal_content(text: str, image_paths: list[str] | None = None) -> str | list[dict[str, Any]]:
+    """构建多模态消息内容。
+
+    参数:
+    - text: 文本内容
+    - image_paths: 图片路径列表
+
+    返回:
+    - str | list[dict]: 如果没有图片，返回纯文本字符串；
+      如果有图片，返回OpenAI多模态格式的内容列表
+    """
+    if not image_paths:
+        return text
+
+    content_parts: list[dict[str, Any]] = []
+
+    # 添加图片部分
+    for img_path in image_paths:
+        data_url = image_to_base64_url(img_path)
+        if data_url:
+            content_parts.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": data_url,
+                },
+            })
+
+    # 添加文本部分
+    if text and text.strip():
+        content_parts.append({
+            "type": "text",
+            "text": text,
+        })
+
+    # 如果没有有效的图片，返回纯文本
+    if len(content_parts) == 1 and content_parts[0].get("type") == "text":
+        return text
+
+    # 如果没有任何内容，返回空文本
+    if not content_parts:
+        return text
+
+    return content_parts

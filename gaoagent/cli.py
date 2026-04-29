@@ -44,8 +44,16 @@ from gaoagent.router import dispatch
     type=str,
     help="指定会话ID，用于导入和保存历史记录",
 )
+@click.option(
+    "--images",
+    type=str,
+    help=(
+        "图片路径列表（逗号分隔），支持多模态输入。\n"
+        "示例：gaoagent --task \"描述这张图片\" --images /path/to/image.png"
+    ),
+)
 @click.pass_context
-def cli(ctx: click.Context, task_question: str | None, mode: str, id: str | None = None) -> None:
+def cli(ctx: click.Context, task_question: str | None, mode: str, id: str | None = None, images: str | None = None) -> None:
     """
     CLI 根命令入口。
 
@@ -65,7 +73,7 @@ def cli(ctx: click.Context, task_question: str | None, mode: str, id: str | None
     """
     q = (task_question or "").strip()
     if q:
-        dispatch("task", question=q, mode=mode, id=id)
+        dispatch("task", question=q, mode=mode, id=id, images=images)
         return
 
 
@@ -147,12 +155,21 @@ def config_cmd() -> None:
     type=int,
     help="上下文消息窗口大小（消息条数），超出时自动裁剪最早的非 system 消息。示例：gaoagent chat --context-size 20",
 )
+@click.option(
+    "--images",
+    type=str,
+    help=(
+        "图片路径列表（逗号分隔），支持多模态输入。\n"
+        "示例：gaoagent chat --prompt \"描述这张图片\" --images /path/to/image.png"
+    ),
+)
 def chat_cmd(
     new: bool,
     prompt: str | None,
     api: str | None,
     model: str | None,
     context_size: int | None,
+    images: str | None,
 ) -> None:
     """
     聊天命令入口：与 LLM 进行多轮对话。
@@ -174,7 +191,7 @@ def chat_cmd(
     - 参数会透传给 `dispatch("chat", ...)`，最终由 `CoreHandlers.chat()` 处理。
     - 对话历史自动保存在 `.gaoagent/history/chat.json`。
     """
-    dispatch("chat", new=new, prompt=prompt, api=api, model=model, context_size=context_size)
+    dispatch("chat", new=new, prompt=prompt, api=api, model=model, context_size=context_size, images=images)
 
 
 @cli.command(
@@ -202,7 +219,15 @@ def chat_cmd(
     type=str,
     help="指定会话ID，用于导入和保存历史记录",
 )
-def task_cmd(question: str | None, mode: str, id: str | None = None) -> None:
+@click.option(
+    "--images",
+    type=str,
+    help=(
+        "图片路径列表（逗号分隔），支持多模态输入。\n"
+        "示例：gaoagent task \"描述这张图片\" --images /path/to/image.png"
+    ),
+)
+def task_cmd(question: str | None, mode: str, id: str | None = None, images: str | None = None) -> None:
     """
     创建并运行一个任务。
 
@@ -219,7 +244,7 @@ def task_cmd(question: str | None, mode: str, id: str | None = None) -> None:
     q = (question or "").strip()
     if not q:
         q = Console.prompt("请输入任务", type=str).strip()
-    dispatch("task", question=q, mode=mode, id=id)
+    dispatch("task", question=q, mode=mode, id=id, images=images)
 
 
 @cli.group(

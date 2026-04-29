@@ -10,21 +10,20 @@ from typing import Any, Callable
 import click
 from gaoagent.core.runner.Console import Console
 
-from gaoagent.core.runner.Utils import safe_json_dumps, try_project_root_dir
+from gaoagent.core.runner.Utils import safe_json_dumps, try_project_root_dir, is_image_file, image_to_base64_url, build_multimodal_content
 
 _TOOL_SPEC_ATTR = "_tool_spec"
 
 
 @dataclass(frozen=True)
 class ToolCall:
-    """ToolCall 类。
+    """封装 LLM 发起的单次工具调用请求。
     
-    职责:
-    - 封装该模块内相关的业务能力与状态。
-    - 提供 ToolCall 语义下的方法集合，供上层流程协调调用。
-    
-    继承关系:
-    - 基类: 无
+    属性:
+    - name: 工具名称，如 "read_file"、"ask_user"
+    - arguments: 工具参数字典，由 LLM 根据 tool spec 生成
+    - description: 工具调用的描述（可选）
+    - tool_call_id: OpenAI 协议中的调用追踪 ID，用于多轮 tool message 关联
     """
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
@@ -34,11 +33,21 @@ class ToolCall:
 
 @dataclass(frozen=True)
 class ToolSpec:
-    """ToolSpec 类。
+    """工具元数据定义，用于生成 OpenAI function calling 的 JSON Schema。
     
-    职责:
-    - 存储工具的元数据，包括描述和参数定义。
-    - 用于动态生成 function calling specs。
+    属性:
+    - description: 工具功能描述，会展示给 LLM 用于决策是否调用
+    - parameters: JSON Schema 格式的参数定义，描述工具接受的输入参数
+    
+    示例:
+        ToolSpec(
+            description="读取文本文件内容",
+            parameters={
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"]
+            }
+        )
     """
     description: str
     parameters: dict[str, Any] = field(default_factory=lambda: {"type": "object", "properties": {}, "additionalProperties": True})
@@ -84,44 +93,33 @@ ToolHandler = Callable[[Any, dict[str, Any]], Any]
 
 
 class ToolRegistry:
-    """ToolRegistry 类。
+    """工具注册中心，管理内置工具的注册、查找和调用。
     
     职责:
-    - 封装该模块内相关的业务能力与状态。
-    - 提供 ToolRegistry 语义下的方法集合，供上层流程协调调用。
+    - 维护工具名称到处理函数的映射
+    - 存储工具的元数据（ToolSpec），用于动态生成 function calling schema
+    - 提供统一的工具调用接口，处理返回值的序列化
     
-    继承关系:
-    - 基类: 无
+    使用场景:
+    - ReActRunner 在每轮决策时通过 list_names() 获取可用工具列表
+    - LLM 返回 tool_calls 时通过 call() 执行具体工具
+    - build_function_specs() 通过 get_spec() 生成工具的 JSON Schema
     """
     def __init__(self) -> None:
-        """__init__ 方法。
-        
-        用途:
-        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
-        
-        参数:
-        - 无: 该方法不需要额外业务参数。
-        
-        返回:
-        - None: 构造函数仅完成实例初始化，不返回业务结果。
-        """
+        """初始化空的工具注册表。"""
         self._tools: dict[str, ToolHandler] = {}
         self._specs: dict[str, ToolSpec] = {}
 
     def register(self, name: str, handler: ToolHandler, spec: ToolSpec | None = None) -> None:
-        """register 方法。
-        
-        用途:
-        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
+        """注册一个工具到注册表。
         
         参数:
-        - name: 输入参数，用于控制该方法的处理行为。
-        - handler: 输入参数，用于控制该方法的处理行为。
-        - spec: 可选的工具元数据，用于动态生成 function calling specs。
-               如果 handler 带有 @tool_spec 装饰器，装饰器中的元数据优先。
+        - name: 工具名称，LLM 将通过此名称调用工具
+        - handler: 工具处理函数，签名为 (ctx, args) -> Any
+        - spec: 可选的工具元数据；如果 handler 已用 @tool_spec 装饰，则装饰器中的元数据优先
         
-        返回:
-        - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+        异常:
+        - ValueError: 当 name 为空或非字符串时抛出
         """
         if not name or not isinstance(name, str):
             raise ValueError("tool name must be non-empty str")
@@ -133,18 +131,19 @@ class ToolRegistry:
         elif spec is not None:
             self._specs[name] = spec
 
-    def call(self, ctx: Any, call: ToolCall) -> str:
-        """call 方法。
-        
-        用途:
-        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
+    def call(self, ctx: Any, call: ToolCall) -> str | list[dict[str, Any]]:
+        """执行工具调用并返回结果。
         
         参数:
-        - ctx: 输入参数，用于控制该方法的处理行为。
-        - call: 输入参数，用于控制该方法的处理行为。
+        - ctx: RunnerContext，传递给工具函数作为上下文
+        - call: 工具调用请求，包含名称和参数
         
         返回:
-        - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+        - str: 大多数工具返回 JSON 字符串
+        - list[dict]: 多模态工具（如 ask_user 带图片）返回 OpenAI 格式的内容列表
+        
+        异常:
+        - KeyError: 当工具名称未注册时抛出
         """
         handler = self._tools.get(call.name)
         if handler is None:
@@ -158,16 +157,11 @@ class ToolRegistry:
         return content
 
     def list_names(self) -> list[str]:
-        """list_names 方法。
+        """返回所有已注册工具的名称列表（已排序）。
         
         用途:
-        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
-        
-        参数:
-        - 无: 该方法不需要额外业务参数。
-        
-        返回:
-        - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+        - ReActRunner 用此列表构建 system prompt 中的可用工具说明
+        - build_function_specs() 用此列表生成 function calling schema
         """
         return sorted(self._tools.keys())
 
@@ -187,16 +181,20 @@ class ToolRegistry:
 
 
 def default_tool_registry() -> ToolRegistry:
-    """default_tool_registry 函数。
+    """创建默认工具注册表，包含所有内置工具。
     
-    用途:
-    - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
-    
-    参数:
-    - 无: 该方法不需要额外业务参数。
+    内置工具列表:
+    - list_dir: 列出目录内容
+    - read_file: 读取文件内容
+    - ask_user: 向用户提问（支持多模态图片输入）
+    - write_file: 写入文件内容
+    - run_command: 执行 shell 命令
+    - search_workspace: 全文检索（基于 ripgrep）
+    - rag_search: RAG 知识库向量检索
+    - a2a_call: 调用远程 A2A Agent
     
     返回:
-    - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+    - ToolRegistry: 已注册所有内置工具的注册表实例
     """
     tools = ToolRegistry()
 
@@ -211,17 +209,16 @@ def default_tool_registry() -> ToolRegistry:
         },
     )
     def _list_dir(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
-        """_list_dir 函数。
-        
-        用途:
-        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
+        """列出指定目录下的文件和子目录。
         
         参数:
-        - _ctx: 输入参数，用于控制该函数的处理行为。
-        - args: 输入参数，用于控制该函数的处理行为。
+        - path: 目录路径，默认为当前工作目录 "."
         
         返回:
-        - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+        - success=True 时: {"success": True, "path": "...", "items": [...]}
+        - success=False 时: {"success": False, "error": {"type": "...", "message": "..."}}
+        
+        items 中每项包含: name, path, is_dir, size
         """
         path = args.get("path", ".")
         if not isinstance(path, str) or not path.strip():
@@ -293,17 +290,15 @@ def default_tool_registry() -> ToolRegistry:
         },
     )
     def _read_file(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
-        """_read_file 函数。
-        
-        用途:
-        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
+        """读取文本文件内容。
         
         参数:
-        - _ctx: 输入参数，用于控制该函数的处理行为。
-        - args: 输入参数，用于控制该函数的处理行为。
+        - path: 文件路径（必填）
+        - encoding: 文件编码，默认 "utf-8"
         
         返回:
-        - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+        - success=True 时: {"success": True, "path": "...", "encoding": "...", "content": "..."}
+        - success=False 时: {"success": False, "error": {"type": "...", "message": "..."}}
         """
         path = args.get("path")
         encoding = args.get("encoding") or "utf-8"
@@ -354,18 +349,21 @@ def default_tool_registry() -> ToolRegistry:
             "additionalProperties": False,
         },
     )
-    def _ask_user(_ctx: Any, args: dict[str, Any]) -> str:
-        """_ask_user 函数。
+    def _ask_user(_ctx: Any, args: dict[str, Any]) -> str | list[dict[str, Any]]:
+        """向用户发起阻塞式提问并等待输入。
         
-        用途:
-        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
+        当任务需要多轮交互（如游戏、追问、确认）时必须调用本工具。
+        用户可以在回答时选择是否附带图片。
         
         参数:
-        - _ctx: 输入参数，用于控制该函数的处理行为。
-        - args: 输入参数，用于控制该函数的处理行为。
+        - prompt: 提示文本（必填）
+        - default: 默认值（可选）
+        - choices: 可选值列表（可选）
         
         返回:
-        - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+        - 无图片时: "用户回答: xxx"
+        - 有图片时: OpenAI 多模态格式列表 [{"type": "image_url", ...}, {"type": "text", ...}]
+        - 出错时: {"success": False, "error": {...}}
         """
         prompt = args.get("prompt")
         default = args.get("default", None)
@@ -402,13 +400,68 @@ def default_tool_registry() -> ToolRegistry:
                     },
                 }
             )
+
         try:
             typ = (
                 click.Choice(choices) if isinstance(choices, list) and choices else str
             )
             Console.interaction(prompt.strip())
             answer = Console.prompt("", default=default, type=typ, prompt_suffix="")
-            return str(answer)
+
+            # 交互式询问用户是否要附带图片
+            user_image_paths: list[str] = []
+            try:
+                add_images = Console.prompt("是否附带图片? (y/n)", default="n", type=str, prompt_suffix=" ")
+                if add_images.strip().lower() in ("y", "yes"):
+                    while True:
+                        img_input = Console.prompt("请输入图片路径 (多个用逗号分隔)", default="", type=str, prompt_suffix=" ")
+                        if not img_input.strip():
+                            break
+                        
+                        valid_paths: list[str] = []
+                        invalid_paths: list[str] = []
+                        for p in img_input.split(","):
+                            p = p.strip()
+                            if not p:
+                                continue
+                            if is_image_file(p):
+                                valid_paths.append(p)
+                            else:
+                                invalid_paths.append(p)
+                        
+                        if invalid_paths:
+                            Console.warn(f"以下路径不是有效的图片文件: {', '.join(invalid_paths)}")
+                            retry = Console.prompt("是否重新输入? (y/n)", default="y", type=str, prompt_suffix=" ")
+                            if retry.strip().lower() in ("y", "yes"):
+                                continue
+                            else:
+                                user_image_paths = valid_paths
+                                break
+                        else:
+                            user_image_paths = valid_paths
+                            break
+            except (KeyboardInterrupt, EOFError):
+                pass
+
+            # 构建多模态响应（OpenAI 格式）
+            if user_image_paths:
+                # 用户提供了图片，返回多模态格式
+                content_parts: list[dict[str, Any]] = []
+                for img_path in user_image_paths:
+                    data_url = image_to_base64_url(img_path)
+                    if data_url:
+                        content_parts.append({
+                            "type": "image_url",
+                            "image_url": {"url": data_url},
+                        })
+                content_parts.append({
+                    "type": "text",
+                    "text": f"用户回答: {answer}",
+                })
+                return content_parts
+            else:
+                # 无图片时返回纯文本
+                return f"用户回答: {answer}"
         except Exception as e:
             return safe_json_dumps(
                 {
@@ -434,17 +487,18 @@ def default_tool_registry() -> ToolRegistry:
         },
     )
     def _write_file(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
-        """_write_file 函数。
-        
-        用途:
-        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
+        """写入文本文件内容。
         
         参数:
-        - _ctx: 输入参数，用于控制该函数的处理行为。
-        - args: 输入参数，用于控制该函数的处理行为。
+        - path: 文件路径（必填）
+        - content: 要写入的内容（必填）
+        - encoding: 文件编码，默认 "utf-8"
+        - mkdirs: 是否自动创建父目录，默认 True
+        - append: 是否追加模式，默认 False（覆盖）
         
         返回:
-        - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+        - success=True 时: {"success": True, "path": "...", "written_chars": n, ...}
+        - success=False 时: {"success": False, "error": {"type": "...", "message": "..."}}
         """
         path = args.get("path")
         content = args.get("content", "")
@@ -514,17 +568,17 @@ def default_tool_registry() -> ToolRegistry:
         },
     )
     def _run_command(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
-        """_run_command 函数。
+        """在本地执行 shell 命令并返回输出。
         
-        用途:
-        - 执行当前步骤的核心逻辑，并与调用链中的上下文保持一致。
+        安全限制: workdir 必须是当前工作目录或其子目录。
         
         参数:
-        - _ctx: 输入参数，用于控制该函数的处理行为。
-        - args: 输入参数，用于控制该函数的处理行为。
+        - workdir: 命令执行的工作目录（必填）
+        - command: 要执行的 shell 命令（必填）
         
         返回:
-        - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
+        - success=True 时: {"success": True, "exit_code": 0, "stdout": "...", "stderr": "...", "response": "..."}
+        - success=False 时: {"success": False, "error": {"type": "...", "message": "..."}}
         """
         workdir = args.get("workdir")
         command = args.get("command")
@@ -634,7 +688,18 @@ def default_tool_registry() -> ToolRegistry:
         },
     )
     def _rag_search(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
-        """_rag_search 函数。"""
+        """在指定的 RAG 知识库中进行向量检索。
+        
+        当用户询问特定领域的知识或项目代码时，使用此工具获取相关上下文。
+        
+        参数:
+        - kb_name: 知识库名称（必填）
+        - query: 检索查询语句（必填）
+        - top_k: 返回结果数量，默认 5
+        
+        返回:
+        - 检索结果字典，包含相关文档切片列表
+        """
         kb_name = args.get("kb_name")
         query = args.get("query")
         top_k = args.get("top_k", 5)

@@ -38,7 +38,7 @@ class PlanAndExecuteRunner(BaseRunner):
         """
         raise NotImplementedError("PlanAndExecuteRunner 使用自定义调度循环，不使用 decide() 方法。")
 
-    def run(self, question: str, id: str | None = None) -> RunResult:
+    def run(self, question: str, id: str | None = None, images: str | None = None) -> RunResult:
         if not question or not str(question).strip():
             Console.fatal("问题为空，无法规划任务。")
             return RunResult(success=False, error="Invalid question")
@@ -102,7 +102,7 @@ class PlanAndExecuteRunner(BaseRunner):
             # 内部使用 ReActRunner 完成子节点
             react_runner = ReActRunner(config=self.runner_config, tools=self._tools)
             # 子任务不使用全局 session id 避免互相干扰，只在内存中传递状态
-            react_result = react_runner.run(task_prompt, id=None) 
+            react_result = react_runner.run(task_prompt, id=None, images=images) 
 
             task_result_text = react_result.final_result if react_result.success else f"执行失败: {react_result.error}"
             

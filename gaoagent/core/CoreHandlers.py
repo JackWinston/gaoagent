@@ -73,11 +73,12 @@ class CoreHandlers:
         api: str | None = None,
         model: str | None = None,
         context_size: int | None = None,
+        images: str | None = None,
     ) -> None:
         """聊天命令入口：将参数交给 ChatRunner 执行。
 
         调用链:
-        - `CoreHandlers.chat()` -> `ChatRunner().run(new, prompt, api, model, context_size)`
+        - `CoreHandlers.chat()` -> `ChatRunner().run(new, prompt, api, model, context_size, images)`
 
         用法:
         - `gaoagent chat`：进入持续交互式聊天，输入 exit 退出。
@@ -85,6 +86,7 @@ class CoreHandlers:
         - `gaoagent chat --prompt "你好"`：单次发送一条消息并输出结果。
         - `gaoagent chat --api openai --model gpt-4.1`：指定 API 和模型。
         - `gaoagent chat --context-size 20`：限制上下文窗口为最近 20 条消息。
+        - `gaoagent chat --prompt "描述图片" --images image.png`：发送带图片的消息。
 
         参数:
         - `new`: 是否重置上下文并开始新会话。为 True 时清空已有历史。
@@ -94,6 +96,7 @@ class CoreHandlers:
         - `model`: 指定模型名称；为空时使用默认模型。
         - `context_size`: 上下文消息窗口大小（消息条数）。
           超出时自动裁剪最早的非 system 消息。
+        - `images`: 图片路径列表（逗号分隔），用于多模态输入。
 
         返回:
         - `None`。结果通过终端输出反馈给用户。
@@ -104,9 +107,10 @@ class CoreHandlers:
             api=api,
             model=model,
             context_size=context_size,
+            images=images,
         )
 
-    def task(self,question:str,mode:str,id:str|None=None) -> None:
+    def task(self,question:str,mode:str,id:str|None=None,images:str|None=None) -> None:
         """任务执行入口：将问题交给 TaskRunner 执行并输出结果。
 
         作用:
@@ -117,12 +121,13 @@ class CoreHandlers:
         - `question`: 用户任务描述，最终作为 Runner 的输入问题。
         - `mode`: 运行模式字符串（如 `react` / `plan` / `retry`）。
         - `id`: 会话ID，用于历史记录。
+        - `images`: 图片路径列表（逗号分隔），用于多模态输入。
 
         调用链:
-        - `CoreHandlers.task()` -> `TaskRunner.run(question, mode, id)` ->
-          `ReActRunner.run(question, id)`（当前三个模式均落到 ReActRunner）。
+        - `CoreHandlers.task()` -> `TaskRunner.run(question, mode, id, images)` ->
+          `ReActRunner.run(question, id, images)`（当前三个模式均落到 ReActRunner）。
 
         返回:
         - `None`。任务结果通过终端输出反馈给用户。
         """
-        TaskRunner().run(question,mode,id=id)
+        TaskRunner().run(question,mode,id=id,images=images)

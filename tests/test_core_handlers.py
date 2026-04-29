@@ -40,6 +40,7 @@ class TestCoreHandlers(unittest.TestCase):
                 api="openai",
                 model="gpt-4.1",
                 context_size=20,
+                images=None,
             )
 
     def test_chat_uses_defaults(self) -> None:
@@ -53,6 +54,7 @@ class TestCoreHandlers(unittest.TestCase):
                 api=None,
                 model=None,
                 context_size=None,
+                images=None,
             )
 
     def test_task_forwards_required_and_optional_args(self) -> None:
@@ -61,7 +63,7 @@ class TestCoreHandlers(unittest.TestCase):
             handlers.task("写一个总结", "react", id="session-1")
             mock_task_runner.assert_called_once_with()
             mock_task_runner.return_value.run.assert_called_once_with(
-                "写一个总结", "react", id="session-1"
+                "写一个总结", "react", id="session-1", images=None
             )
 
     def test_task_id_none_is_forwarded(self) -> None:
@@ -70,7 +72,7 @@ class TestCoreHandlers(unittest.TestCase):
             handlers.task("继续", "plan")
             mock_task_runner.assert_called_once_with()
             mock_task_runner.return_value.run.assert_called_once_with(
-                "继续", "plan", id=None
+                "继续", "plan", id=None, images=None
             )
 
 

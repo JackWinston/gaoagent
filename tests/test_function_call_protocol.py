@@ -4,9 +4,7 @@ import unittest
 
 from gaoagent.core.runner.FunctionCallProtocol import (
     build_function_specs,
-    map_chat_completion_to_protocol,
-    parse_tool_arguments,
-    http_error_to_final,
+    map_chat_completion_to_protocol
 )
 
 

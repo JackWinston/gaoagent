@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from gaoagent.core.runner.BaseRunner import RequestBaseInfo, StepResult
 
 
-_PROJECTS_REGISTRY_FILENAME = "inited_projects.txt"
+PROJECTS_REGISTRY_FILENAME = "inited_projects.txt"
 
 
 def now_ms() -> int:

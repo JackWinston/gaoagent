@@ -7,6 +7,7 @@ from gaoagent.core.runner.Console import Console
 import json
 import shutil
 import datetime
+from gaoagent.core.runner.Utils import PROJECTS_REGISTRY_FILENAME
 
 from gaoagent.core.CoreConfigDefault import CoreConfigDefault
 from gaoagent.mcp.MCPClientCompat import MCPStdioClientSync, build_mcp_tools_cache_payload
@@ -34,7 +35,6 @@ class CoreInit:
     - 仅负责“初始化期编排”，不负责任务执行期的推理逻辑。
     - 不负责 LLM 调用细节；只负责准备运行所需配置与资源。
     """
-    _PROJECTS_REGISTRY_FILENAME = "inited_projects.txt"
 
     def init(self) -> None:
         """执行当前项目的一次完整初始化流程。
@@ -506,7 +506,7 @@ class CoreInit:
 
     def _project_registry_file(self, global_dir: Path) -> Path:
         """返回“已初始化项目注册表”文件路径。"""
-        return global_dir / self._PROJECTS_REGISTRY_FILENAME
+        return global_dir / PROJECTS_REGISTRY_FILENAME
 
     def _cleanup_project_registry(self, registry_file: Path) -> list[Path]:
         """清理注册表中的失效项目路径并返回保留结果。

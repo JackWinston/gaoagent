@@ -97,12 +97,13 @@ gaoagent --task "分析这个仓库结构" --mode react
 
 - `gaoagent --version`：显示版本
 - `gaoagent -h` / `gaoagent --help`：显示帮助
-- `gaoagent --task <文本> --mode <模式组合>`：快捷执行任务，支持 `react`, `plan`, `retry` 或用逗号/空格分隔的组合（如 `retry,plan`）。
+- `gaoagent --task <文本> --mode <模式组合> [--images <路径列表>]`：快捷执行任务，支持 `react`, `plan`, `retry` 或用逗号/空格分隔的组合（如 `retry,plan`）。`--images` 支持多模态图片输入（逗号分隔路径）。
 
 示例：
 
 ```bash
 gaoagent --task "实现文件上传接口" --mode react
+gaoagent --task "描述这张图片" --images /path/to/image.png
 ```
 
 注意：`task` 命令支持组合模式（如 `retry,plan`），使用逗号或空格分隔最多 2 个参数。
@@ -144,6 +145,7 @@ gaoagent config
 - `--api <api_name>`：指定已保存的 API 提供方名称
 - `--model <model_name>`：指定模型名称
 - `--context-size <int>` / `--contextSize <int>`：上下文消息窗口大小（消息条数）
+- `--images <路径列表>`：图片路径（逗号分隔），支持多模态输入
 
 示例：
 
@@ -162,6 +164,9 @@ gaoagent chat --api openai --model gpt-4.1
 
 # 限制上下文窗口为最近 20 条消息
 gaoagent chat --context-size 20
+
+# 发送图片进行多模态对话
+gaoagent chat --prompt "描述这张图片" --images /path/to/image.png
 ```
 
 #### `gaoagent task [question] --mode <模式组合> [--id <session_id>]`
@@ -175,6 +180,7 @@ gaoagent chat --context-size 20
   - `retry`：自我反思与重试模式（默认包装 ReAct）
   - `retry,plan` 或 `retry react` 等组合：使用 ReflectionRunner 包装内部的目标模式
 - `--id` 传入时，可以导入或保存以该 id 命名的历史对话记录（`.gaoagent/history/<session_id>.json`）
+- `--images` 传入时，支持多模态图片输入（逗号分隔路径）
 
 示例：
 
@@ -183,6 +189,7 @@ gaoagent task "生成接口文档"
 gaoagent task --mode react "帮我重构这个模块"
 gaoagent task --mode "retry,plan" "解决复杂的部署报错"
 gaoagent task --id session_1 "继续刚才的工作"
+gaoagent task --images /path/to/screenshot.png "分析这张截图"
 gaoagent task
 ```
 

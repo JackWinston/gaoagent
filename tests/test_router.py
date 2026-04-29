@@ -49,9 +49,16 @@ class TestDispatch(unittest.TestCase):
             dispatch("nonexistent.action")
 
     def test_valid_action_calls_route(self) -> None:
-        with unittest.mock.patch.object(ROUTES["init"], "dispatch") as mock_dispatch:
+        mock_handler = MagicMock()
+        mock_factory = MagicMock(return_value=mock_handler)
+        original_route = ROUTES["init"]
+        try:
+            ROUTES["init"] = Route(factory=mock_factory, method_name=original_route.method_name)
             dispatch("init")
-            mock_dispatch.assert_called_once_with()
+            mock_factory.assert_called_once()
+            mock_handler.init.assert_called_once_with()
+        finally:
+            ROUTES["init"] = original_route
 
 
 if __name__ == "__main__":

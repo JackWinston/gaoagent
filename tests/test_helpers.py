@@ -6,7 +6,6 @@ from pathlib import Path
 
 from gaoagent.core.ChatRunner import _extract_content, _trim_messages
 from gaoagent.core.runner.FunctionCallProtocol import (
-    http_error_to_final,
     parse_tool_arguments,
 )
 from gaoagent.mcp.MCPClientCompat import _sanitize_token, export_tool_name
@@ -89,12 +88,6 @@ class TestFunctionCallProtocolHelpers(unittest.TestCase):
         self.assertEqual(parse_tool_arguments("[1,2]"), {"value": [1, 2]})
         self.assertEqual(parse_tool_arguments("not-json"), {"_raw": "not-json"})
         self.assertEqual(parse_tool_arguments(None), {})
-
-    def test_http_error_to_final(self) -> None:
-        out = http_error_to_final(500, "boom", "x" * 600)
-        self.assertEqual(out["type"], "final")
-        self.assertIn("status=500", out["content"])
-        self.assertIn("reason=boom", out["content"])
 
 
 class TestMcpCompatHelpers(unittest.TestCase):

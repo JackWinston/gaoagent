@@ -274,23 +274,3 @@ def parse_tool_arguments(raw: Any) -> dict[str, Any]:
         except Exception:
             return {"_raw": text}
     return {}
-
-
-def http_error_to_final(status: int, reason: str, body: str) -> dict[str, Any]:
-    """http_error_to_final 函数。
-    
-    用途:
-    - 将 HTTP 错误转换为 final 动作.
-    
-    参数:
-    - status: HTTP 状态码.
-    - reason: 错误原因.
-    - body: 输入的错误响应体.
-    
-    返回:
-    - dict[str, Any]: 返回转换后的 final 动作字典.  
-    """
-    return {
-        "type": "final",
-        "content": f"LLM HTTPError: status={status}, reason={reason}, body={truncate_text(body, 500)}",
-    }

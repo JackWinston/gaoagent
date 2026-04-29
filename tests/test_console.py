@@ -7,32 +7,36 @@ from gaoagent.core.runner.Console import Console, _is_debug_enabled
 
 
 class TestConsoleMethods(unittest.TestCase):
-    @patch("gaoagent.core.runner.Console.click.echo")
-    def test_echo(self, mock_echo) -> None:
+    @patch("gaoagent.core.runner.Console._rich")
+    def test_echo(self, mock_rich) -> None:
         Console.echo("hello")
-        mock_echo.assert_called_once_with("hello", err=False, nl=True)
+        mock_rich.print.assert_called_once_with("hello", end="\n")
 
-    @patch("gaoagent.core.runner.Console.click.echo")
-    def test_info(self, mock_echo) -> None:
+    @patch("gaoagent.core.runner.Console._rich")
+    def test_info(self, mock_rich) -> None:
         Console.info("info msg")
-        mock_echo.assert_called_once()
+        mock_rich.print.assert_called_once_with("info msg")
 
-    @patch("gaoagent.core.runner.Console.click.echo")
-    def test_error_uses_stderr(self, mock_echo) -> None:
+    @patch("gaoagent.core.runner.Console._rich")
+    def test_error_uses_stderr(self, mock_rich) -> None:
+        stderr_at_call_time = []
+        mock_rich.print.side_effect = lambda *a, **kw: stderr_at_call_time.append(mock_rich.stderr)
         Console.error("err msg")
-        args, kwargs = mock_echo.call_args
-        self.assertTrue(kwargs.get("err"))
+        mock_rich.print.assert_called_once_with("[error]err msg[/error]")
+        self.assertEqual(stderr_at_call_time, [True])
 
-    @patch("gaoagent.core.runner.Console.click.echo")
-    def test_fatal_uses_stderr(self, mock_echo) -> None:
+    @patch("gaoagent.core.runner.Console._rich")
+    def test_fatal_uses_stderr(self, mock_rich) -> None:
+        stderr_at_call_time = []
+        mock_rich.print.side_effect = lambda *a, **kw: stderr_at_call_time.append(mock_rich.stderr)
         Console.fatal("fatal msg")
-        args, kwargs = mock_echo.call_args
-        self.assertTrue(kwargs.get("err"))
+        mock_rich.print.assert_called_once_with("[fatal]fatal msg[/fatal]")
+        self.assertEqual(stderr_at_call_time, [True])
 
-    @patch("gaoagent.core.runner.Console.click.echo")
-    def test_warn(self, mock_echo) -> None:
+    @patch("gaoagent.core.runner.Console._rich")
+    def test_warn(self, mock_rich) -> None:
         Console.warn("warning")
-        mock_echo.assert_called_once()
+        mock_rich.print.assert_called_once_with("[warning]warning[/warning]")
 
     def test_interaction_text_returns_string(self) -> None:
         result = Console.interaction_text("test")

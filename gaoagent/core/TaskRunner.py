@@ -4,6 +4,7 @@ from gaoagent.core.runner.Console import Console
 
 from gaoagent.core.runner.BaseRunner import RunnerConfig
 from gaoagent.core.runner.ReActRunner import ReActRunner
+from gaoagent.core.runner.PlanAndExecuteRunner import PlanAndExecuteRunner
 from gaoagent.core.runner.Tooling import ToolRegistry, default_tool_registry
 from gaoagent.core.runner.RunLogger import (
     create_run_logger,
@@ -75,7 +76,7 @@ class TaskRunner:
                 m = "react"
 
             if m == "plan":
-                result = ReActRunner(config=self._cfg, tools=self._tools).run(question, id=id)
+                result = PlanAndExecuteRunner(config=self._cfg, tools=self._tools).run(question, id=id)
             elif m == "retry":
                 result = ReActRunner(config=self._cfg, tools=self._tools).run(question, id=id)
             else:

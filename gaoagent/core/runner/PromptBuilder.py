@@ -17,10 +17,37 @@ def build_system_prompt(tool_names: list[str], mode: Mode) -> str:
     if mode == "react":
         return build_react_system_text(tool_names=tool_names)
     elif mode == "plan":
-        return build_react_system_text(tool_names=tool_names)
+        return build_plan_system_text()
     elif mode == "retry":
         return build_react_system_text(tool_names=tool_names)
 
+
+def build_plan_system_text() -> str:
+    """
+    构建 Plan 模式（任务规划与评估）的系统提示词。
+    该模式下的模型扮演项目经理或调度者，只负责拆解步骤和评估结果，不直接执行工具。
+    """
+    base_prompt = f"""
+你是一个高级任务规划与评估专家，负责管理和调度复杂的代码任务。
+你的主要职责是：
+1. 分析用户的复杂请求，将其拆解为多个明确、可顺序执行的子任务。
+2. 评估子任务执行后的结果，判断总任务是否已经完成，或者是否需要根据新情况调整后续计划。
+
+【核心原则】
+- 拆解任务时：保持颗粒度适中。如果任务太大，请拆分成 3-5 个合理步骤；如果任务简单，1-2 步即可。
+- 评估任务时：不要主观臆断。请严格根据历史子任务的“执行结果”判断状态。
+- **你只能输出合法的 JSON 字符串**，绝对不要包含任何 Markdown 代码块（如 ```json ... ```），也不要包含任何开场白或解释性文字。
+
+【系统信息】
+OS : {os.name}
+Platform : {platform.platform()}
+Python Version : {platform.python_version()}
+当前时间 : {time.strftime("%Y-%m-%d %H:%M:%S %Z", time.localtime())}
+
+【当前项目目录】
+{ try_project_root_dir() or os.getcwd()}
+"""
+    return base_prompt
 
 def build_react_system_text(*, tool_names: list[str] | None) -> str:
     """build_react_system_text 函数。

@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from gaoagent.core.runner.BaseRunner import Decision
 from gaoagent.core.runner.Utils import summarize, truncate_text
 
 
@@ -396,60 +395,6 @@ def parse_tool_arguments(raw: Any) -> dict[str, Any]:
         except Exception:
             return {"_raw": text}
     return {}
-
-
-def protocol_to_decision(step: int, tool_names: set[str], payload: Any) -> Decision:
-    """protocol_to_decision 函数。
-    
-    用途:
-    - 将协议字典转换为 Decision 对象, 用于在执行器中使用.
-    
-    参数:
-    - step: 当前步骤编号.
-    - tool_names: 工具名称集合.
-    - payload: 输入的协议字典.
-    
-    返回:
-    - Decision: 返回转换后的 Decision 对象.
-    """
-    if not isinstance(payload, dict):
-        return Decision(kind="final", final=f"LLM 响应必须是对象，实际是：{type(payload).__name__}")
-
-    action_type = payload.get("type")
-    if action_type == "question":
-        content = payload.get("content", "")
-        return Decision(kind="thought", internal={"name": "question", "output": str(content)})
-
-    if action_type == "observation":
-        content = payload.get("content", "")
-        return Decision(kind="thought", internal={"name": "observation", "output": str(content)})
-
-    if action_type == "final":
-        content = payload.get("content", "")
-        return Decision(kind="final", final=str(content))
-
-    if action_type == "thought":
-        inner_name = payload.get("name") or "thought"
-        content = payload.get("content", None)
-        output = payload.get("output")
-        if output is None and content is not None:
-            output = str(content)
-        return Decision(
-            kind="thought",
-            internal={
-                "name": str(inner_name),
-                "input": payload.get("input"),
-                "output": output,
-            },
-        )
-
-    return Decision(
-        kind="final",
-        final=(
-            "协议错误：LLM 响应 type 必须是 question/thought/observation/final。"
-            f" 当前为 {repr(action_type)}，step={step}"
-        ),
-    )
 
 
 def http_error_to_final(status: int, reason: str, body: str) -> dict[str, Any]:

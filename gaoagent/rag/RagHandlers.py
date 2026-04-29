@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import click
 from gaoagent.core.runner.Console import Console
 import shutil

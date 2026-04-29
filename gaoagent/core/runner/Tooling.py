@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import functools
 import json
 from pathlib import Path
 import subprocess
@@ -10,6 +11,8 @@ import click
 from gaoagent.core.runner.Console import Console
 
 from gaoagent.core.runner.Utils import safe_json_dumps, try_project_root_dir
+
+_TOOL_SPEC_ATTR = "_tool_spec"
 
 
 @dataclass(frozen=True)
@@ -27,6 +30,54 @@ class ToolCall:
     arguments: dict[str, Any] = field(default_factory=dict)
     description: str = ""
     tool_call_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    """ToolSpec 类。
+    
+    职责:
+    - 存储工具的元数据，包括描述和参数定义。
+    - 用于动态生成 function calling specs。
+    """
+    description: str
+    parameters: dict[str, Any] = field(default_factory=lambda: {"type": "object", "properties": {}, "additionalProperties": True})
+
+
+def tool_spec(description: str, params_schema: dict[str, Any] | None = None):
+    """装饰器：为工具函数附加元数据，供 build_function_specs 动态读取。
+    
+    用法:
+        @tool_spec(
+            description="读取文本文件内容。",
+            params_schema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "encoding": {"type": "string", "default": "utf-8"},
+                },
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        )
+        def _read_file(_ctx, args):
+            ...
+    """
+    spec = ToolSpec(
+        description=description,
+        parameters=params_schema or {"type": "object", "properties": {}, "additionalProperties": True},
+    )
+
+    def decorator(fn: ToolHandler) -> ToolHandler:
+        setattr(fn, _TOOL_SPEC_ATTR, spec)
+
+        @functools.wraps(fn)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
 
 
 ToolHandler = Callable[[Any, dict[str, Any]], Any]
@@ -55,8 +106,9 @@ class ToolRegistry:
         - None: 构造函数仅完成实例初始化，不返回业务结果。
         """
         self._tools: dict[str, ToolHandler] = {}
+        self._specs: dict[str, ToolSpec] = {}
 
-    def register(self, name: str, handler: ToolHandler) -> None:
+    def register(self, name: str, handler: ToolHandler, spec: ToolSpec | None = None) -> None:
         """register 方法。
         
         用途:
@@ -65,6 +117,8 @@ class ToolRegistry:
         参数:
         - name: 输入参数，用于控制该方法的处理行为。
         - handler: 输入参数，用于控制该方法的处理行为。
+        - spec: 可选的工具元数据，用于动态生成 function calling specs。
+               如果 handler 带有 @tool_spec 装饰器，装饰器中的元数据优先。
         
         返回:
         - Any: 返回当前步骤产出的结果；具体结构由调用方约定。
@@ -72,6 +126,12 @@ class ToolRegistry:
         if not name or not isinstance(name, str):
             raise ValueError("tool name must be non-empty str")
         self._tools[name] = handler
+        # 优先从装饰器提取元数据
+        decorator_spec = getattr(handler, _TOOL_SPEC_ATTR, None)
+        if isinstance(decorator_spec, ToolSpec):
+            self._specs[name] = decorator_spec
+        elif spec is not None:
+            self._specs[name] = spec
 
     def call(self, ctx: Any, call: ToolCall) -> str:
         """call 方法。
@@ -111,6 +171,20 @@ class ToolRegistry:
         """
         return sorted(self._tools.keys())
 
+    def get_spec(self, name: str) -> ToolSpec | None:
+        """get_spec 方法。
+        
+        用途:
+        - 获取指定工具的元数据。
+        
+        参数:
+        - name: 工具名称。
+        
+        返回:
+        - ToolSpec | None: 返回工具的元数据，如果不存在则返回 None。
+        """
+        return self._specs.get(name)
+
 
 def default_tool_registry() -> ToolRegistry:
     """default_tool_registry 函数。
@@ -126,6 +200,16 @@ def default_tool_registry() -> ToolRegistry:
     """
     tools = ToolRegistry()
 
+    @tool_spec(
+        description="获取目录下的文件/子目录列表（默认列出当前工作目录）。",
+        params_schema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "default": "."},
+            },
+            "additionalProperties": False,
+        },
+    )
     def _list_dir(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
         """_list_dir 函数。
         
@@ -196,6 +280,18 @@ def default_tool_registry() -> ToolRegistry:
                 "path": str(path),
             }
 
+    @tool_spec(
+        description="读取文本文件内容。",
+        params_schema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "encoding": {"type": "string", "default": "utf-8"},
+            },
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+    )
     def _read_file(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
         """_read_file 函数。
         
@@ -245,6 +341,19 @@ def default_tool_registry() -> ToolRegistry:
                 "path": str(path),
             }
 
+    @tool_spec(
+        description="向用户发起一次阻塞式提问并等待输入，返回用户原始回答。当任务需要多轮交互（如游戏、追问、确认）时必须调用本工具，不要用 assistant 文本模拟提问。",
+        params_schema={
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string"},
+                "default": {"type": "string"},
+                "choices": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["prompt"],
+            "additionalProperties": False,
+        },
+    )
     def _ask_user(_ctx: Any, args: dict[str, Any]) -> str:
         """_ask_user 函数。
         
@@ -309,6 +418,21 @@ def default_tool_registry() -> ToolRegistry:
                 }
             )
 
+    @tool_spec(
+        description="写入文本文件内容（默认覆盖）。可自动创建父目录。",
+        params_schema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "content": {"type": "string"},
+                "encoding": {"type": "string", "default": "utf-8"},
+                "mkdirs": {"type": "boolean", "default": True},
+                "append": {"type": "boolean", "default": False},
+            },
+            "required": ["path", "content"],
+            "additionalProperties": False,
+        },
+    )
     def _write_file(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
         """_write_file 函数。
         
@@ -377,6 +501,18 @@ def default_tool_registry() -> ToolRegistry:
                 "path": str(path),
             }
 
+    @tool_spec(
+        description="在本地执行控制台命令并返回输出。workdir 必须是当前工作目录或其子目录。",
+        params_schema={
+            "type": "object",
+            "properties": {
+                "workdir": {"type": "string"},
+                "command": {"type": "string"},
+            },
+            "required": ["workdir", "command"],
+            "additionalProperties": False,
+        },
+    )
     def _run_command(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
         """_run_command 函数。
         
@@ -474,6 +610,29 @@ def default_tool_registry() -> ToolRegistry:
                 "command": str(command),
             }
 
+    @tool_spec(
+        description="在指定的 RAG 知识库中进行向量检索，获取与问题最相关的文档切片。当用户询问特定领域的知识或项目代码时，使用此工具获取上下文。",
+        params_schema={
+            "type": "object",
+            "properties": {
+                "kb_name": {
+                    "type": "string",
+                    "description": "知识库名称（如果不确定，可先不传或询问用户，或者默认使用最相关的）"
+                },
+                "query": {
+                    "type": "string",
+                    "description": "检索的查询语句，通常是用户的原问题或提取的关键词"
+                },
+                "top_k": {
+                    "type": "integer",
+                    "default": 5,
+                    "description": "返回的最相关文档切片数量"
+                }
+            },
+            "required": ["kb_name", "query"],
+            "additionalProperties": False,
+        },
+    )
     def _rag_search(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
         """_rag_search 函数。"""
         kb_name = args.get("kb_name")
@@ -492,6 +651,24 @@ def default_tool_registry() -> ToolRegistry:
         except Exception as e:
             return {"success": False, "error": f"检索异常：{str(e)}"}
 
+    @tool_spec(
+        description="调用远程 A2A Agent。",
+        params_schema={
+            "type": "object",
+            "properties": {
+                "agent_name": {
+                    "type": "string",
+                    "description": "目标 A2A Agent 名称"
+                },
+                "query": {
+                    "type": "string",
+                    "description": "需要委派的具体任务或问题"
+                }
+            },
+            "required": ["agent_name", "query"],
+            "additionalProperties": False,
+        },
+    )
     def _a2a_call(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
         """
         调用远程 A2A Agent。
@@ -563,6 +740,46 @@ def default_tool_registry() -> ToolRegistry:
         except Exception as e:
             return {"success": False, "error": f"A2A 调用异常: {str(e)}"}
 
+    @tool_spec(
+        description="在当前项目内执行全文检索（基于 ripgrep），并遵循 .gitignore 过滤规则。该工具不会搜索项目目录之外的文件。",
+        params_schema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "检索关键词或正则表达式（默认按 regex 语义）"
+                },
+                "scope_path": {
+                    "type": "string",
+                    "description": "可选；在该目录或文件范围搜索（绝对路径，且必须位于当前项目内）"
+                },
+                "file_glob": {
+                    "description": "可选文件过滤；支持字符串或字符串数组（例如 *.py 或 [\"*.py\", \"*.md\"]）",
+                    "oneOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}}
+                    ]
+                },
+                "max_results": {
+                    "type": "integer",
+                    "default": 50,
+                    "description": "最多返回的命中数（上限 500）"
+                },
+                "case_sensitive": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "是否大小写敏感；false 时使用 smart-case"
+                },
+                "literal": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "是否按字面量搜索（不使用正则）"
+                }
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    )
     def _search_workspace(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
         """在当前项目范围内执行全文检索（基于 ripgrep）。"""
         query = args.get("query")
@@ -828,6 +1045,7 @@ def default_tool_registry() -> ToolRegistry:
             "results": results,
         }
 
+    # 注册工具（元数据已通过 @tool_spec 装饰器绑定到函数上）
     tools.register("list_dir", _list_dir)
     tools.register("read_file", _read_file)
     tools.register("ask_user", _ask_user)

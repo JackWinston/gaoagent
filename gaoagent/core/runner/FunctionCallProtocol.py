@@ -10,6 +10,7 @@ def build_function_specs(
     tool_names: list[str],
     *,
     mcp_exported_map: dict[str, Any] | None = None,
+    tool_registry: Any | None = None,
 ) -> list[dict[str, Any]]:
     """build_function_specs 函数。
     
@@ -19,168 +20,46 @@ def build_function_specs(
     参数:
     - tool_names: 本地定义的函数名称列表
     - mcp_exported_map: MCP函数映射表, 用于在运行时调用外部函数.
+    - tool_registry: 可选的 ToolRegistry 实例，用于动态获取工具元数据.
     
     返回:
     - list[dict[str, Any]]: 返回模型需要的函数调用规格列表.
     """
-    known: dict[str, dict[str, Any]] = {
-        "list_dir": {
-            "description": "获取目录下的文件/子目录列表（默认列出当前工作目录）。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "default": "."},
-                },
-                "additionalProperties": False,
-            },
-        },
-        "read_file": {
-            "description": "读取文本文件内容。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"},
-                    "encoding": {"type": "string", "default": "utf-8"},
-                },
-                "required": ["path"],
-                "additionalProperties": False,
-            },
-        },
-        "ask_user": {
-            "description": (
-                "向用户发起一次阻塞式提问并等待输入，返回用户原始回答。"
-                "当任务需要多轮交互（如游戏、追问、确认）时必须调用本工具，"
-                "不要用 assistant 文本模拟提问。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "prompt": {"type": "string"},
-                    "default": {"type": "string"},
-                    "choices": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["prompt"],
-                "additionalProperties": False,
-            },
-        },
-        "write_file": {
-            "description": "写入文本文件内容（默认覆盖）。可自动创建父目录。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"},
-                    "content": {"type": "string"},
-                    "encoding": {"type": "string", "default": "utf-8"},
-                    "mkdirs": {"type": "boolean", "default": True},
-                    "append": {"type": "boolean", "default": False},
-                },
-                "required": ["path", "content"],
-                "additionalProperties": False,
-            },
-        },
-        "run_command": {
-            "description": (
-                "在本地执行控制台命令并返回输出。"
-                "workdir 必须是当前工作目录或其子目录。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "workdir": {"type": "string"},
-                    "command": {"type": "string"},
-                },
-                "required": ["workdir", "command"],
-                "additionalProperties": False,
-            },
-        },
-        "search_workspace": {
-            "description": (
-                "在当前项目内执行全文检索（基于 ripgrep），并遵循 .gitignore 过滤规则。"
-                "该工具不会搜索项目目录之外的文件。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "检索关键词或正则表达式（默认按 regex 语义）"
-                    },
-                    "scope_path": {
-                        "type": "string",
-                        "description": "可选；在该目录或文件范围搜索（绝对路径，且必须位于当前项目内）"
-                    },
-                    "file_glob": {
-                        "description": "可选文件过滤；支持字符串或字符串数组（例如 *.py 或 [\"*.py\", \"*.md\"]）",
-                        "oneOf": [
-                            {"type": "string"},
-                            {"type": "array", "items": {"type": "string"}}
-                        ]
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "default": 50,
-                        "description": "最多返回的命中数（上限 500）"
-                    },
-                    "case_sensitive": {
-                        "type": "boolean",
-                        "default": False,
-                        "description": "是否大小写敏感；false 时使用 smart-case"
-                    },
-                    "literal": {
-                        "type": "boolean",
-                        "default": False,
-                        "description": "是否按字面量搜索（不使用正则）"
-                    }
-                },
-                "required": ["query"],
-                "additionalProperties": False,
-            },
-        },
-        "rag_search": {
-            "description": (
-                "在指定的 RAG 知识库中进行向量检索，获取与问题最相关的文档切片。"
-                "当用户询问特定领域的知识或项目代码时，使用此工具获取上下文。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "kb_name": {
-                        "type": "string",
-                        "description": "知识库名称（如果不确定，可先不传或询问用户，或者默认使用最相关的）"
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "检索的查询语句，通常是用户的原问题或提取的关键词"
-                    },
-                    "top_k": {
-                        "type": "integer",
-                        "default": 5,
-                        "description": "返回的最相关文档切片数量"
-                    }
-                },
-                "required": ["kb_name", "query"],
-                "additionalProperties": False,
-            },
-        },
-    }
+    # 优先从 tool_registry 获取元数据，否则使用硬编码的 known 字典作为回退
     specs: list[dict[str, Any]] = []
     for name in tool_names:
-        meta = known.get(name)
-        mcp_meta = (
-            (mcp_exported_map or {}).get(name)
-            if isinstance(mcp_exported_map, dict)
-            else None
-        )
-        desc = (
-            (meta or {}).get("description")
-            or (mcp_meta.get("description") if isinstance(mcp_meta, dict) else None)
-            or f"Tool `{name}` registered in ToolRegistry"
-        )
-        params = (
-            (meta or {}).get("parameters")
-            or (mcp_meta.get("parameters") if isinstance(mcp_meta, dict) else None)
-            or {"type": "object", "properties": {}, "additionalProperties": True}
-        )
+        desc = None
+        params = None
+        
+        # 1. 尝试从 tool_registry 获取元数据
+        if tool_registry is not None:
+            try:
+                spec = tool_registry.get_spec(name)
+                if spec is not None:
+                    desc = spec.description
+                    params = spec.parameters
+            except Exception:
+                pass
+        
+        # 2. 如果 tool_registry 没有提供，尝试从 mcp_exported_map 获取
+        if desc is None or params is None:
+            mcp_meta = (
+                (mcp_exported_map or {}).get(name)
+                if isinstance(mcp_exported_map, dict)
+                else None
+            )
+            if isinstance(mcp_meta, dict):
+                if desc is None:
+                    desc = mcp_meta.get("description")
+                if params is None:
+                    params = mcp_meta.get("parameters")
+        
+        # 3. 最终回退：使用默认描述和空参数
+        if desc is None:
+            desc = f"Tool `{name}` registered in ToolRegistry"
+        if params is None:
+            params = {"type": "object", "properties": {}, "additionalProperties": True}
+        
         specs.append(
             {
                 "type": "function",

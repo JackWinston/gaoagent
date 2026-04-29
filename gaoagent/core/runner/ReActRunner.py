@@ -749,7 +749,7 @@ class ReActRunner(BaseRunner):
             all_tool_names += sorted([str(x) for x in mcp_exported_map.keys()])
 
         tools = (
-            build_function_specs(all_tool_names, mcp_exported_map=mcp_exported_map)
+            build_function_specs(all_tool_names, mcp_exported_map=mcp_exported_map, tool_registry=self.runner_config.tools)
             if all_tool_names
             else None
         )

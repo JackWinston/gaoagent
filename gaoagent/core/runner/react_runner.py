@@ -319,91 +319,19 @@ class ReActRunner(BaseRunner):
         """
         return self._call_llm(ctx)
 
-    def run(self, question: str, id: str | None = None, shared_memory: dict[str, Any] | None = None, images: str | None = None) -> RunResult:
-        """执行一次完整的 ReAct 推理回合（主控循环）。
+    # --------------- MCP 工具发现 ---------------
 
-        这个方法是 Runner 的“编排入口”，负责把一次用户问题从“输入文本”
-        推进到“最终答案”或“明确失败”，并在中间驱动 LLM 与工具多轮交互。
-
-        方法职责（业务视角）:
-        - 组装本轮会话上下文（system prompt + user question）。
-        - 决定本轮可用工具集合（内置工具 + MCP 导出工具）。
-        - 在 step 循环中执行 ReAct 协议：
-          - 让 LLM 决策（`final` / `thought` / `tool_calls` / `retry`）。
-          - 若是工具调用，则执行工具并将 observation 回填到历史。
-          - 若是最终答案，则结束并返回。
-        - 在关键异常场景下快速失败，避免静默降级造成“看似成功、实际不可用”。
-
-        参数:
-        - question: 用户输入问题。必须是非空字符串；空值会被直接拒绝。
-        - id: 传入的历史会话ID，若有则导入并在此基础上继续。
-        - shared_memory: 预留参数，当前实现未消费（用于未来跨轮共享记忆扩展）。目前,本轮的记忆是存在在 `RunnerContext` 中的,并未做本地持久化 , 后续版本可能会考虑添加本地持久化功能,并把 `shared_memory` 作为参数传递给 `decide()` 方法。
-
+    def _discover_mcp_tools(self) -> tuple[dict[str, Any], dict[str, Any], dict[str, str]]:
+        """发现并加载 MCP 工具。
+        
+        职责:
+        - 优先读取缓存（快路径）
+        - 当缓存缺失或覆盖不完整时，运行期临时拉取工具清单兜底
+        - 记录发现错误信息
+        
         返回:
-        - RunResult:
-          - `success=True`: LLM 产出 `final` 决策并返回最终文本。
-          - `success=False`: 输入非法、MCP 工具不可用、工具注册缺失、或超过最大步数。
-
-        核心流程（实现细节）:
-        1) 参数校验与上下文重置
-           - 拒绝空问题。
-           - 新建 `RunnerContext(step=0, history=[])`，确保每次 `run()` 是独立回合。
-
-        2) MCP 工具发现与可用性判定
-           - 优先读取缓存（快路径）：`load_mcp_tools_cache()`。
-           - 仅保留“已启用服务器”对应的工具映射，防止脏配置混入。
-           - 当缓存缺失或覆盖不完整时，运行期临时拉取工具清单兜底。
-           - 记录发现错误信息；若“配置了 MCP 但无任何可用 MCP 工具”，直接失败返回，
-             不降级为“仅本地工具”模式（这是明确的业务保护策略）。
-
-        3) 构建对话初始历史
-           - 动态生成 system prompt，注入当前可见工具名集合。
-           - 追加 user 问题消息。
-
-        4) 进入逐步推理循环（1..max_steps）
-           - 调用 `decide()`（内部即 `_call_llm()`）获取当前 StepResult。
-           - 按决策类型分支：
-            - `tool_calls`:
-               - 规范化 tool call（补齐 call id、校验参数类型）。
-               - 先写入 assistant 的 `tool_calls` 消息，再逐个执行工具。
-               - 工具路由优先级：本地 ToolRegistry > MCP 导出工具 > Unknown tool 错误。
-               - 工具执行结果统一写入 `role=tool` 消息，供下一轮 LLM 消费。
-               - 分支结束后 `continue`，进入下一 step。
-             - `thought`:
-               - 将模型中间思考文本（协议字段或退化 content）回填 history。
-               - `continue` 进入下一 step。
-             - `final`:
-               - 把最终协议信息写入 history（便于审计/追踪）。
-               - 立即返回成功结果。
-
-        5) 兜底失败
-           - 若达到 `max_steps` 仍未产出 `final`，返回 `Max steps reached`。
-
-        关键设计点:
-        - “模型可见工具集”和“执行期可路由工具集”保持一致，减少 `Unknown tool` 偏差。
-        - 工具 observation 统一 JSON 化，提升协议稳定性和可观测性。
-        - 通过 run_logger 记录 step 结果与关键异常，便于线上排障。
+        - tuple: (mcp_servers_raw, mcp_exported_map, mcp_discovery_errors)
         """
-        if question is None or not str(question).strip():
-            Console.fatal("  任务无法执行：问题内容为空，请输入有效的任务描述。")
-            return RunResult(success=False, error="Invalid question")
-
-        self.runner_context = RunnerContext(step=0, history=[])
-        Console.debug(
-            safe_json_dumps(
-                {
-                    "event": "runner_start",
-                    "mode": self.mode,
-                    "max_steps": self.runner_config.max_steps,
-                    "question_preview": (str(question).strip()[:200]),
-                }
-            )
-        )
-
-        # MCP 工具发现策略：
-        # 1) 优先读取配置阶段写入的工具缓存（最快、最稳定）。
-        # 2) 若缓存缺失但存在 mcpServers，则在运行时临时拉取一次工具清单作为兜底。
-        #    这样即便用户忘记重新执行 config，也能在本次运行中使用 MCP 工具。
         mcp_servers_all = load_mcp_servers_raw()
         mcp_servers_raw = self._enabled_mcp_servers(mcp_servers_all)
         mcp_cache = load_mcp_tools_cache() or {}
@@ -458,8 +386,25 @@ class ReActRunner(BaseRunner):
 
         self._mcp_servers_raw = mcp_servers_raw
         self._mcp_exported_map = mcp_exported_map
+        return mcp_servers_raw, mcp_exported_map, mcp_discovery_errors
 
-        # 明确失败：有 MCP 配置但没有任何 MCP 工具时，不再静默降级为“仅本地工具”。
+    def _check_mcp_availability(
+        self,
+        mcp_servers_raw: dict[str, Any],
+        mcp_exported_map: dict[str, Any],
+        mcp_discovery_errors: dict[str, str],
+    ) -> RunResult | None:
+        """检查 MCP 工具可用性，若不可用则返回失败结果。
+        
+        参数:
+        - mcp_servers_raw: MCP 服务器配置
+        - mcp_exported_map: MCP 导出工具映射
+        - mcp_discovery_errors: 发现错误信息
+        
+        返回:
+        - RunResult: 失败结果（若 MCP 不可用）
+        - None: MCP 可用或未配置
+        """
         if isinstance(mcp_servers_raw, dict) and mcp_servers_raw and not mcp_exported_map:
             run_logger = get_current_run_logger()
             reason_payload = {
@@ -483,8 +428,31 @@ class ReActRunner(BaseRunner):
                     f" details={safe_json_dumps(reason_payload)}"
                 ),
             )
+        return None
 
-        from gaoagent.core.runner.utils import load_history, save_history
+    # --------------- 对话历史初始化 ---------------
+
+    def _init_conversation_history(
+        self,
+        question: str,
+        id: str | None,
+        images: str | None,
+        mcp_exported_map: dict[str, Any],
+    ) -> None:
+        """构建对话初始历史。
+        
+        职责:
+        - 动态生成 system prompt，注入当前可见工具名集合
+        - 加载历史记录（若有）
+        - 追加 user 问题消息（支持多模态）
+        
+        参数:
+        - question: 用户输入问题
+        - id: 历史会话 ID
+        - images: 图片路径（逗号分隔）
+        - mcp_exported_map: MCP 导出工具映射
+        """
+        from gaoagent.core.runner.utils import load_history
 
         # 添加系统提示词
         tool_names = (self.runner_config.tools.list_names() if self.runner_config.tools else [])
@@ -522,6 +490,432 @@ class ReActRunner(BaseRunner):
         user_content = build_multimodal_content(question, image_paths)
         self.runner_context.history.append({"role": "user", "content": user_content})
 
+    # --------------- 步骤处理 ---------------
+
+    def _extract_reasoning_content(self, now_step: StepResult) -> str | None:
+        """从步骤结果中提取推理内容。
+        
+        参数:
+        - now_step: 步骤结果
+        
+        返回:
+        - str | None: 推理内容（若有）
+        """
+        payload = now_step.raw.get("payload") if isinstance(now_step.raw, dict) else None
+        first_choice = (
+            payload.get("choices")[0]
+            if isinstance(payload, dict)
+            and isinstance(payload.get("choices"), list)
+            and payload.get("choices")
+            and isinstance(payload.get("choices")[0], dict)
+            else {}
+        )
+        payload_message = (
+            first_choice.get("message") if isinstance(first_choice.get("message"), dict) else {}
+        )
+        return payload_message.get("reasoning_content")
+
+    def _handle_tool_calls(
+        self,
+        step: int,
+        now_step: StepResult,
+        reasoning_content: str | None,
+        id: str | None,
+        mcp_servers_raw: dict[str, Any],
+        mcp_exported_map: dict[str, Any],
+    ) -> RunResult | None:
+        """处理 tool_calls 决策。
+        
+        职责:
+        - 规范化 tool call（补齐 call id、校验参数类型）
+        - 写入 assistant 的 tool_calls 消息
+        - 逐个执行工具（本地 ToolRegistry > MCP 导出工具 > Unknown tool）
+        - 将工具执行结果写入 role=tool 消息
+        
+        参数:
+        - step: 当前步骤号
+        - now_step: 步骤结果
+        - reasoning_content: 推理内容
+        - id: 历史会话 ID
+        - mcp_servers_raw: MCP 服务器配置
+        - mcp_exported_map: MCP 导出工具映射
+        
+        返回:
+        - RunResult: 失败结果（若工具系统异常）
+        - None: 正常处理完成
+        """
+        from gaoagent.core.runner.utils import save_history
+
+        calls = now_step.tool_calls or []
+        Console.debug(
+            safe_json_dumps(
+                {
+                    "event": "step_tool_calls_enter",
+                    "step": step,
+                    "call_count": len(calls),
+                }
+            )
+        )
+        normalized_calls: list[dict] = []
+        for idx, call in enumerate(calls):
+            call_obj = call if isinstance(call, dict) else {}
+            call_id_raw = call_obj.get("tool_call_id")
+            call_id = (
+                call_id_raw
+                if isinstance(call_id_raw, str) and call_id_raw.strip()
+                else f"call_{step}_{idx}"
+            )
+            fn_name = call_obj.get("name")
+            fn_args = call_obj.get("arguments", {})
+            if not isinstance(fn_args, dict):
+                fn_args = {}
+            normalized_calls.append(
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": fn_name if isinstance(fn_name, str) else "",
+                        "arguments": safe_json_dumps(fn_args),
+                    },
+                    "_runtime_name": fn_name,
+                    "_runtime_arguments": call_obj.get("arguments", {}),
+                }
+            )
+
+        assistant_message: dict[str, Any] = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": call["id"],
+                    "type": call["type"],
+                    "function": call["function"],
+                }
+                for call in normalized_calls
+            ],
+        }
+        if isinstance(reasoning_content, str) and reasoning_content:
+            assistant_message["reasoning_content"] = reasoning_content
+        self.runner_context.history.append(assistant_message)
+
+        if not self.runner_config.tools:
+            Console.fatal("  工具系统异常：未找到可用的工具注册表。")
+            Console.warn("   请尝试重新初始化项目：`gaoagent init`")
+            if id:
+                save_history(id, self.runner_context.history)
+            return RunResult(success=False, error="No tool registry configured")
+
+        for call in normalized_calls:
+            name = call.get("_runtime_name")
+            arguments = call.get("_runtime_arguments", {})
+
+            if not isinstance(name, str) or not name.strip():
+                observation = safe_json_dumps(
+                    {
+                        "success": False,
+                        "error": {
+                            "type": "ValueError",
+                            "message": "tool name must be non-empty str",
+                        },
+                    }
+                )
+            elif not isinstance(arguments, dict):
+                observation = safe_json_dumps(
+                    {
+                        "success": False,
+                        "error": {
+                            "type": "ValueError",
+                            "message": "tool arguments must be object",
+                        },
+                    }
+                )
+            else:
+                stream_printed = (
+                    self._current_stream_callback.has_output()
+                    if self._current_stream_callback
+                    else False
+                )
+                self._print_live_tool_call(step, name, arguments, stream_printed=stream_printed)
+                try:
+                    # 路由顺序：
+                    # 1) 先走内置 ToolRegistry（本地工具）
+                    # 2) 再走 MCP 导出工具映射（远程/stdio 工具）
+                    # 3) 两者都找不到则返回 Unknown tool
+                    if self.runner_config.tools and name in self.runner_config.tools.list_names():
+                        Console.debug(
+                            safe_json_dumps(
+                                {
+                                    "event": "tool_call_local",
+                                    "step": step,
+                                    "tool": name,
+                                }
+                            )
+                        )
+                        observation = self.runner_config.tools.call(
+                            self.runner_context, ToolCall(name=name, arguments=arguments)
+                        )
+                    elif isinstance(mcp_exported_map, dict) and name in mcp_exported_map:
+                        mcp_meta = mcp_exported_map.get(name) or {}
+                        server_name = mcp_meta.get("server")
+                        tool_name = mcp_meta.get("tool")
+                        server_cfg = (
+                            mcp_servers_raw.get(server_name)
+                            if isinstance(server_name, str) and isinstance(mcp_servers_raw, dict)
+                            else None
+                        )
+                        if not isinstance(server_name, str) or not isinstance(tool_name, str) or not isinstance(server_cfg, dict):
+                            Console.fatal(f"  MCP 工具配置异常：{name} 的映射信息不完整")
+                            observation = {
+                                "success": False,
+                                "error": {
+                                    "type": "ValueError",
+                                    "message": f"MCP tool 映射无效：name={name}",
+                                },
+                            }
+                        else:
+                            Console.debug(
+                                safe_json_dumps(
+                                    {
+                                        "event": "tool_call_mcp",
+                                        "step": step,
+                                        "tool": name,
+                                        "server": server_name,
+                                        "remote_tool": tool_name,
+                                    }
+                                )
+                            )
+                            # MCP 调用结果统一封装为 success/result 结构，便于模型侧稳定解析。
+                            observation = MCPStdioClientSync.from_config(
+                                server_name=server_name,
+                                config=server_cfg,
+                            ).call_tool(tool_name=tool_name, arguments=arguments)
+                            observation = {
+                                "success": True,
+                                "server": server_name,
+                                "tool": tool_name,
+                                "result": observation,
+                            }
+                    else:
+                        Console.fatal(f"  未知工具：模型尝试调用不存在的工具 `{name}`")
+                        Console.warn(f"   可用工具：{', '.join(self.runner_config.tools.list_names()) if self.runner_config.tools else '无'}")
+                        observation = {
+                            "success": False,
+                            "error": {
+                                "type": "ValueError",
+                                "message": f"Unknown tool: {name}",
+                            },
+                        }
+                except Exception as e:
+                    Console.fatal(f"  工具执行失败：{name}")
+                    Console.warn(f"   错误详情：{e}")
+                    observation = {
+                        "success": False,
+                        "error": {"type": type(e).__name__, "message": str(e)},
+                    }
+
+            # 处理多模态格式的 observation（如 ask_user 工具返回的图片）
+            if isinstance(observation, list):
+                # 多模态格式：直接使用 list 作为 content
+                tool_content = observation
+            elif isinstance(observation, str):
+                # 纯文本格式
+                tool_content = observation
+            else:
+                # dict 或其他格式：转换为 JSON 字符串
+                tool_content = safe_json_dumps(observation)
+            
+            self.runner_context.history.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call["id"],
+                    "content": tool_content,
+                }
+            )
+            # 多模态格式：提取文本部分用于日志预览
+            if isinstance(observation, list):
+                text_parts = [p.get("text", "") for p in observation if isinstance(p, dict) and p.get("type") == "text"]
+                observation_preview = summarize(" ".join(text_parts) if text_parts else "[多模态内容]", 180)
+            else:
+                observation_preview = summarize(observation, 180)
+            
+            Console.debug(
+                safe_json_dumps(
+                    {
+                        "event": "tool_observation_written",
+                        "step": step,
+                        "tool": name if isinstance(name, str) else "",
+                        "observation_preview": observation_preview,
+                    }
+                )
+            )
+            self._print_live_tool_result(
+                step,
+                name if isinstance(name, str) else "",
+                observation,
+            )
+        return None
+
+    def _handle_thought(
+        self,
+        step: int,
+        now_step: StepResult,
+        reasoning_content: str | None,
+    ) -> None:
+        """处理 thought 决策。
+        
+        职责:
+        - 将模型中间思考文本回填 history
+        - 打印思考摘要
+        
+        参数:
+        - step: 当前步骤号
+        - now_step: 步骤结果
+        - reasoning_content: 推理内容
+        """
+        protocol = (
+            now_step.raw.get("protocol")
+            if isinstance(now_step.raw, dict)
+            else None
+        )
+        if isinstance(protocol, dict):
+            content = protocol.get("content")
+            if content is None:
+                content = protocol.get("output")
+            assistant_content = str(content) if content is not None else ""
+        else:
+            assistant_content = now_step.content or ""
+        assistant_message = {"role": "assistant", "content": assistant_content}
+        if isinstance(reasoning_content, str) and reasoning_content:
+            assistant_message["reasoning_content"] = reasoning_content
+        self.runner_context.history.append(assistant_message)
+        # 如果已流式输出，只打印简短摘要
+        stream_printed = (
+            self._current_stream_callback.has_output()
+            if self._current_stream_callback
+            else False
+        )
+        if stream_printed:
+            Console.info(f"  第{step}步: 决策 → 继续思考")
+        else:
+            Console.info(
+                f"第{step}步: 思考中 : {summarize(assistant_content, 240)}"
+            )
+        Console.debug(
+            safe_json_dumps(
+                {
+                    "event": "step_thought_written",
+                    "step": step,
+                    "preview": summarize(assistant_content, 180),
+                }
+            )
+        )
+
+    def _handle_final(
+        self,
+        step: int,
+        now_step: StepResult,
+        reasoning_content: str | None,
+        id: str | None,
+    ) -> RunResult:
+        """处理 final 决策。
+        
+        职责:
+        - 把最终协议信息写入 history（便于审计/追踪）
+        - 保存历史记录（若有 id）
+        - 返回成功结果
+        
+        参数:
+        - step: 当前步骤号
+        - now_step: 步骤结果
+        - reasoning_content: 推理内容
+        - id: 历史会话 ID
+        
+        返回:
+        - RunResult: 成功结果
+        """
+        from gaoagent.core.runner.utils import save_history
+
+        protocol = now_step.raw.get("protocol") if isinstance(now_step.raw, dict) else None
+        if isinstance(protocol, dict):
+            assistant_content = safe_json_dumps(protocol)
+        else:
+            assistant_content = safe_json_dumps(
+                {"type": "final", "content": now_step.content or ""}
+            )
+        assistant_message = {"role": "assistant", "content": assistant_content}
+        if isinstance(reasoning_content, str) and reasoning_content:
+            assistant_message["reasoning_content"] = reasoning_content
+        self.runner_context.history.append(assistant_message)
+        Console.debug(
+            safe_json_dumps(
+                {
+                    "event": "runner_final",
+                    "step": step,
+                    "final_preview": summarize(now_step.content or "", 240),
+                }
+            )
+        )
+        if id:
+            save_history(id, self.runner_context.history)
+        return RunResult(success=True, final_result=now_step.content)
+
+    # --------------- 主控循环 ---------------
+
+    def run(self, question: str, id: str | None = None, shared_memory: dict[str, Any] | None = None, images: str | None = None) -> RunResult:
+        """执行一次完整的 ReAct 推理回合（主控循环）。
+
+        这个方法是 Runner 的"编排入口"，负责把一次用户问题从"输入文本"
+        推进到"最终答案"或"明确失败"，并在中间驱动 LLM 与工具多轮交互。
+
+        方法职责（业务视角）:
+        - 组装本轮会话上下文（system prompt + user question）。
+        - 决定本轮可用工具集合（内置工具 + MCP 导出工具）。
+        - 在 step 循环中执行 ReAct 协议：
+          - 让 LLM 决策（`final` / `thought` / `tool_calls` / `retry`）。
+          - 若是工具调用，则执行工具并将 observation 回填到历史。
+          - 若是最终答案，则结束并返回。
+        - 在关键异常场景下快速失败，避免静默降级造成"看似成功、实际不可用"。
+
+        参数:
+        - question: 用户输入问题。必须是非空字符串；空值会被直接拒绝。
+        - id: 传入的历史会话ID，若有则导入并在此基础上继续。
+        - shared_memory: 预留参数，当前实现未消费（用于未来跨轮共享记忆扩展）。目前,本轮的记忆是存在在 `RunnerContext` 中的,并未做本地持久化 , 后续版本可能会考虑添加本地持久化功能,并把 `shared_memory` 作为参数传递给 `decide()` 方法。
+
+        返回:
+        - RunResult:
+          - `success=True`: LLM 产出 `final` 决策并返回最终文本。
+          - `success=False`: 输入非法、MCP 工具不可用、工具注册缺失、或超过最大步数。
+        """
+        if question is None or not str(question).strip():
+            Console.fatal("  任务无法执行：问题内容为空，请输入有效的任务描述。")
+            return RunResult(success=False, error="Invalid question")
+
+        self.runner_context = RunnerContext(step=0, history=[])
+        Console.debug(
+            safe_json_dumps(
+                {
+                    "event": "runner_start",
+                    "mode": self.mode,
+                    "max_steps": self.runner_config.max_steps,
+                    "question_preview": (str(question).strip()[:200]),
+                }
+            )
+        )
+
+        # MCP 工具发现
+        mcp_servers_raw, mcp_exported_map, mcp_discovery_errors = self._discover_mcp_tools()
+
+        # 检查 MCP 可用性
+        mcp_check_result = self._check_mcp_availability(mcp_servers_raw, mcp_exported_map, mcp_discovery_errors)
+        if mcp_check_result is not None:
+            return mcp_check_result
+
+        # 构建对话初始历史
+        self._init_conversation_history(question, id, images, mcp_exported_map)
+
+        # 逐步推理循环
+        from gaoagent.core.runner.utils import save_history
+
         for step in range(1, self.runner_config.max_steps + 1):
             # 更新上下文中的 step 信息
             self.runner_context.step = step
@@ -551,293 +945,20 @@ class ReActRunner(BaseRunner):
             if run_logger is not None:
                 run_logger.log_event("step_result", now_step, step=step)
 
-            payload = now_step.raw.get("payload") if isinstance(now_step.raw, dict) else None
-            first_choice = (
-                payload.get("choices")[0]
-                if isinstance(payload, dict)
-                and isinstance(payload.get("choices"), list)
-                and payload.get("choices")
-                and isinstance(payload.get("choices")[0], dict)
-                else {}
-            )
-            payload_message = (
-                first_choice.get("message") if isinstance(first_choice.get("message"), dict) else {}
-            )
-            reasoning_content = payload_message.get("reasoning_content")
+            reasoning_content = self._extract_reasoning_content(now_step)
 
             if now_step.decision == "tool_calls":
-                calls = now_step.tool_calls or []
-                Console.debug(
-                    safe_json_dumps(
-                        {
-                            "event": "step_tool_calls_enter",
-                            "step": step,
-                            "call_count": len(calls),
-                        }
-                    )
+                error_result = self._handle_tool_calls(
+                    step, now_step, reasoning_content, id, mcp_servers_raw, mcp_exported_map
                 )
-                normalized_calls: list[dict] = []
-                for idx, call in enumerate(calls):
-                    call_obj = call if isinstance(call, dict) else {}
-                    call_id_raw = call_obj.get("tool_call_id")
-                    call_id = (
-                        call_id_raw
-                        if isinstance(call_id_raw, str) and call_id_raw.strip()
-                        else f"call_{step}_{idx}"
-                    )
-                    fn_name = call_obj.get("name")
-                    fn_args = call_obj.get("arguments", {})
-                    if not isinstance(fn_args, dict):
-                        fn_args = {}
-                    normalized_calls.append(
-                        {
-                            "id": call_id,
-                            "type": "function",
-                            "function": {
-                                "name": fn_name if isinstance(fn_name, str) else "",
-                                "arguments": safe_json_dumps(fn_args),
-                            },
-                            "_runtime_name": fn_name,
-                            "_runtime_arguments": call_obj.get("arguments", {}),
-                        }
-                    )
-
-                assistant_message: dict[str, Any] = {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "id": call["id"],
-                            "type": call["type"],
-                            "function": call["function"],
-                        }
-                        for call in normalized_calls
-                    ],
-                }
-                if isinstance(reasoning_content, str) and reasoning_content:
-                    assistant_message["reasoning_content"] = reasoning_content
-                self.runner_context.history.append(assistant_message)
-
-                if not self.runner_config.tools:
-                    Console.fatal("  工具系统异常：未找到可用的工具注册表。")
-                    Console.warn("   请尝试重新初始化项目：`gaoagent init`")
-                    if id:
-                        save_history(id, self.runner_context.history)
-                    return RunResult(success=False, error="No tool registry configured")
-
-                for call in normalized_calls:
-                    name = call.get("_runtime_name")
-                    arguments = call.get("_runtime_arguments", {})
-
-                    if not isinstance(name, str) or not name.strip():
-                        observation = safe_json_dumps(
-                            {
-                                "success": False,
-                                "error": {
-                                    "type": "ValueError",
-                                    "message": "tool name must be non-empty str",
-                                },
-                            }
-                        )
-                    elif not isinstance(arguments, dict):
-                        observation = safe_json_dumps(
-                            {
-                                "success": False,
-                                "error": {
-                                    "type": "ValueError",
-                                    "message": "tool arguments must be object",
-                                },
-                            }
-                        )
-                    else:
-                        stream_printed = (
-                            self._current_stream_callback.has_output()
-                            if self._current_stream_callback
-                            else False
-                        )
-                        self._print_live_tool_call(step, name, arguments, stream_printed=stream_printed)
-                        try:
-                            # 路由顺序：
-                            # 1) 先走内置 ToolRegistry（本地工具）
-                            # 2) 再走 MCP 导出工具映射（远程/stdio 工具）
-                            # 3) 两者都找不到则返回 Unknown tool
-                            if self.runner_config.tools and name in self.runner_config.tools.list_names():
-                                Console.debug(
-                                    safe_json_dumps(
-                                        {
-                                            "event": "tool_call_local",
-                                            "step": step,
-                                            "tool": name,
-                                        }
-                                    )
-                                )
-                                observation = self.runner_config.tools.call(
-                                    self.runner_context, ToolCall(name=name, arguments=arguments)
-                                )
-                            elif isinstance(mcp_exported_map, dict) and name in mcp_exported_map:
-                                mcp_meta = mcp_exported_map.get(name) or {}
-                                server_name = mcp_meta.get("server")
-                                tool_name = mcp_meta.get("tool")
-                                server_cfg = (
-                                    mcp_servers_raw.get(server_name)
-                                    if isinstance(server_name, str) and isinstance(mcp_servers_raw, dict)
-                                    else None
-                                )
-                                if not isinstance(server_name, str) or not isinstance(tool_name, str) or not isinstance(server_cfg, dict):
-                                    Console.fatal(f"  MCP 工具配置异常：{name} 的映射信息不完整")
-                                    observation = {
-                                        "success": False,
-                                        "error": {
-                                            "type": "ValueError",
-                                            "message": f"MCP tool 映射无效：name={name}",
-                                        },
-                                    }
-                                else:
-                                    Console.debug(
-                                        safe_json_dumps(
-                                            {
-                                                "event": "tool_call_mcp",
-                                                "step": step,
-                                                "tool": name,
-                                                "server": server_name,
-                                                "remote_tool": tool_name,
-                                            }
-                                        )
-                                    )
-                                    # MCP 调用结果统一封装为 success/result 结构，便于模型侧稳定解析。
-                                    observation = MCPStdioClientSync.from_config(
-                                        server_name=server_name,
-                                        config=server_cfg,
-                                    ).call_tool(tool_name=tool_name, arguments=arguments)
-                                    observation = {
-                                        "success": True,
-                                        "server": server_name,
-                                        "tool": tool_name,
-                                        "result": observation,
-                                    }
-                            else:
-                                Console.fatal(f"  未知工具：模型尝试调用不存在的工具 `{name}`")
-                                Console.warn(f"   可用工具：{', '.join(self.runner_config.tools.list_names()) if self.runner_config.tools else '无'}")
-                                observation = {
-                                    "success": False,
-                                    "error": {
-                                        "type": "ValueError",
-                                        "message": f"Unknown tool: {name}",
-                                    },
-                                }
-                        except Exception as e:
-                            Console.fatal(f"  工具执行失败：{name}")
-                            Console.warn(f"   错误详情：{e}")
-                            observation = {
-                                "success": False,
-                                "error": {"type": type(e).__name__, "message": str(e)},
-                            }
-
-                    # 处理多模态格式的 observation（如 ask_user 工具返回的图片）
-                    if isinstance(observation, list):
-                        # 多模态格式：直接使用 list 作为 content
-                        tool_content = observation
-                    elif isinstance(observation, str):
-                        # 纯文本格式
-                        tool_content = observation
-                    else:
-                        # dict 或其他格式：转换为 JSON 字符串
-                        tool_content = safe_json_dumps(observation)
-                    
-                    self.runner_context.history.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": call["id"],
-                            "content": tool_content,
-                        }
-                    )
-                    # 多模态格式：提取文本部分用于日志预览
-                    if isinstance(observation, list):
-                        text_parts = [p.get("text", "") for p in observation if isinstance(p, dict) and p.get("type") == "text"]
-                        observation_preview = summarize(" ".join(text_parts) if text_parts else "[多模态内容]", 180)
-                    else:
-                        observation_preview = summarize(observation, 180)
-                    
-                    Console.debug(
-                        safe_json_dumps(
-                            {
-                                "event": "tool_observation_written",
-                                "step": step,
-                                "tool": name if isinstance(name, str) else "",
-                                "observation_preview": observation_preview,
-                            }
-                        )
-                    )
-                    self._print_live_tool_result(
-                        step,
-                        name if isinstance(name, str) else "",
-                        observation,
-                    )
+                if error_result is not None:
+                    return error_result
                 continue
             if now_step.decision == "thought":
-                protocol = (
-                    now_step.raw.get("protocol")
-                    if isinstance(now_step.raw, dict)
-                    else None
-                )
-                if isinstance(protocol, dict):
-                    content = protocol.get("content")
-                    if content is None:
-                        content = protocol.get("output")
-                    assistant_content = str(content) if content is not None else ""
-                else:
-                    assistant_content = now_step.content or ""
-                assistant_message = {"role": "assistant", "content": assistant_content}
-                if isinstance(reasoning_content, str) and reasoning_content:
-                    assistant_message["reasoning_content"] = reasoning_content
-                self.runner_context.history.append(assistant_message)
-                # 如果已流式输出，只打印简短摘要
-                stream_printed = (
-                    self._current_stream_callback.has_output()
-                    if self._current_stream_callback
-                    else False
-                )
-                if stream_printed:
-                    Console.info(f"  第{step}步: 决策 → 继续思考")
-                else:
-                    Console.info(
-                        f"第{step}步: 思考中 : {summarize(assistant_content, 240)}"
-                    )
-                Console.debug(
-                    safe_json_dumps(
-                        {
-                            "event": "step_thought_written",
-                            "step": step,
-                            "preview": summarize(assistant_content, 180),
-                        }
-                    )
-                )
+                self._handle_thought(step, now_step, reasoning_content)
                 continue
             if now_step.decision == "final":
-               
-                protocol = now_step.raw.get("protocol") if isinstance(now_step.raw, dict) else None
-                if isinstance(protocol, dict):
-                    assistant_content = safe_json_dumps(protocol)
-                else:
-                    assistant_content = safe_json_dumps(
-                        {"type": "final", "content": now_step.content or ""}
-                    )
-                assistant_message = {"role": "assistant", "content": assistant_content}
-                if isinstance(reasoning_content, str) and reasoning_content:
-                    assistant_message["reasoning_content"] = reasoning_content
-                self.runner_context.history.append(assistant_message)
-                Console.debug(
-                    safe_json_dumps(
-                        {
-                            "event": "runner_final",
-                            "step": step,
-                            "final_preview": summarize(now_step.content or "", 240),
-                        }
-                    )
-                )
-                if id:
-                    save_history(id, self.runner_context.history)
-                return RunResult(success=True, final_result=now_step.content)
+                return self._handle_final(step, now_step, reasoning_content, id)
 
         Console.fatal(f"  任务执行超限：已达到最大步数 ({self.runner_config.max_steps})，仍未获得最终结果。")
         Console.warn("   可能原因：任务过于复杂或模型陷入循环")
@@ -847,15 +968,15 @@ class ReActRunner(BaseRunner):
         return RunResult(success=False, error="Max steps reached")
 
     def _call_llm(self, ctx: RunnerContext) -> StepResult:
-        """执行单步 LLM 决策调用，并对“非法协议输出”做有限重试。
+        """执行单步 LLM 决策调用，并对"非法协议输出"做有限重试。
 
-        这个方法是 ReAct 每一步的“模型决策器”：
+        这个方法是 ReAct 每一步的"模型决策器"：
         输入当前 `ctx.history`，输出一个标准化 `StepResult`，交给 `run()`
         决定下一步是继续思考、调用工具、还是结束。
 
         方法职责（业务视角）:
         - 创建 OpenAI 兼容客户端并发起 chat completion 请求。
-        - 把“当前可用工具”转换为 function calling 规格传给模型。
+        - 把"当前可用工具"转换为 function calling 规格传给模型。
         - 解析模型响应为统一协议（`parse_llm_response`）。
         - 当模型输出不符合协议时，按配置进行有限次数自动重试。
         - 重试仍失败时，返回可解释的 `final` 失败说明，而不是抛异常中断主流程。
@@ -885,18 +1006,18 @@ class ReActRunner(BaseRunner):
            - 用 `parse_llm_response()` 归一化响应，得到 `StepResult`。
 
         4) 非法输出重试
-           - 当 `decision=="retry"` 视为“模型输出不合法/不可执行”。
+           - 当 `decision=="retry"` 视为"模型输出不合法/不可执行"。
            - 在 `llm_invalid_retry` 配置范围内重试，并记录日志事件
              `llm_invalid_response_retry`（attempt、raw、content）。
            - 一旦拿到非 `retry` 结果立即返回。
 
         5) 重试耗尽兜底
            - 组装 `_retry` 元信息写入 `raw`，并返回 `decision="final"`，
-             内容明确包含“已重试仍失败 + 次数 + 最后一次输出摘要”。
+             内容明确包含"已重试仍失败 + 次数 + 最后一次输出摘要"。
 
         关键设计点:
         - 不把解析异常直接上抛，而是转换成协议内可消费结果，让外层流程保持稳定。
-        - 与 `run()` 共用同一份 MCP 工具可见集，保证“可见即可调、可调即可见”。
+        - 与 `run()` 共用同一份 MCP 工具可见集，保证"可见即可调、可调即可见"。
         """
         if not self.request_base_info:
             Console.fatal("  API 配置缺失：无法获取模型接口配置。")
@@ -910,8 +1031,8 @@ class ReActRunner(BaseRunner):
         tool_names = (
             self.runner_config.tools.list_names() if self.runner_config.tools else []
         )
-        # 只使用 run() 阶段已确定的 MCP 工具映射，确保“模型可见工具集”
-        # 与“执行期可路由工具集”完全一致，避免出现 Unknown tool 偏差。
+        # 只使用 run() 阶段已确定的 MCP 工具映射，确保"模型可见工具集"
+        # 与"执行期可路由工具集"完全一致，避免出现 Unknown tool 偏差。
         mcp_exported_map = getattr(self, "_mcp_exported_map", None)
         if not isinstance(mcp_exported_map, dict):
             mcp_exported_map = {}

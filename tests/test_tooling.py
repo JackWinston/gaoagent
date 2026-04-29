@@ -65,7 +65,7 @@ class TestDefaultToolRegistry(unittest.TestCase):
     def test_list_dir_with_valid_path(self) -> None:
         import tempfile, os
         reg = default_tool_registry()
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(dir=os.getcwd()) as tmpdir:
             open(os.path.join(tmpdir, "test.txt"), "w").close()
             result = reg.call(None, ToolCall(name="list_dir", arguments={"path": tmpdir}))
             self.assertIn("test.txt", result)
@@ -73,11 +73,17 @@ class TestDefaultToolRegistry(unittest.TestCase):
     def test_read_file_valid(self) -> None:
         import tempfile, os
         reg = default_tool_registry()
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-            f.write("hello content")
-            f.flush()
-            result = reg.call(None, ToolCall(name="read_file", arguments={"path": f.name}))
+        f_name = ""
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, dir=os.getcwd()) as f:
+                f.write("hello content")
+                f.flush()
+                f_name = f.name
+            result = reg.call(None, ToolCall(name="read_file", arguments={"path": f_name}))
             self.assertIn("hello content", result)
+        finally:
+            if f_name and os.path.exists(f_name):
+                os.remove(f_name)
 
     def test_read_file_missing_path(self) -> None:
         reg = default_tool_registry()
@@ -94,7 +100,7 @@ class TestDefaultToolRegistry(unittest.TestCase):
     def test_write_file(self) -> None:
         import tempfile, os
         reg = default_tool_registry()
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(dir=os.getcwd()) as tmpdir:
             path = os.path.join(tmpdir, "output.txt")
             result = reg.call(None, ToolCall(name="write_file", arguments={"path": path, "content": "test data"}))
             self.assertIn("success", result.lower())

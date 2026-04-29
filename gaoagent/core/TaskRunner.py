@@ -82,13 +82,14 @@ class TaskRunner:
                 modes = ["react"]
 
             if len(modes) > 2:
-                Console.fatal("mode 参数错误：最多只能接受 1~2 个参数，例如 'retry,plan'。")
+                Console.fatal("  参数错误：mode 最多接受 2 个参数，例如 `retry,plan`")
                 return
 
             valid_modes = {"react", "plan", "retry"}
             for m in modes:
                 if m not in valid_modes:
-                    Console.fatal(f"mode 参数错误：不支持的模式 '{m}'。支持的模式有: react, plan, retry")
+                    Console.fatal(f"  参数错误：不支持的模式 `{m}`")
+                    Console.warn(f"   支持的模式：react, plan, retry")
                     return
 
             if len(modes) == 1:
@@ -102,7 +103,8 @@ class TaskRunner:
                     runner = ReActRunner(config=self._cfg, tools=self._tools)
             else:
                 if "retry" not in modes:
-                    Console.fatal("mode 参数错误：如果有 2 个参数，其中一个必须是 'retry'")
+                    Console.fatal("  参数错误：双模式组合时，其中一个必须是 `retry`")
+                    Console.warn("   示例：retry,plan 或 retry,react")
                     return
                 
                 other_mode = modes[0] if modes[1] == "retry" else modes[1]
@@ -112,7 +114,7 @@ class TaskRunner:
                 elif other_mode == "react":
                     target = ReActRunner(config=self._cfg, tools=self._tools)
                 else:
-                    Console.fatal("mode 参数错误：不能同时使用两个 retry")
+                    Console.fatal("  参数错误：不能同时使用两个 `retry` 模式")
                     return
                 
                 runner = ReflectionRunner(target_runner=target, config=self._cfg)
@@ -126,4 +128,4 @@ class TaskRunner:
                 Console.info(result.final_result)
             return
 
-        Console.fatal(f"任务没跑成：{result.error or 'unknown error'}")
+        Console.fatal(f"  任务执行失败：{result.error or '未知错误'}")

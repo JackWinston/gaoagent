@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from gaoagent.core.runner.Console import Console
 from gaoagent.core.runner.RunLogger import get_current_run_logger
@@ -24,7 +25,7 @@ class HttpResponse:
     - status: HTTP 状态码；无法获得时为 None（例如网络异常）
     - reason: 失败原因的简要描述（异常类型/HTTP reason 等）
     - json: 若响应体可解析为 JSON，则为解析后的对象（通常是 dict）
-    - text: 原始响应体文本；对于流式响应会是合成后的“最终 JSON 文本”
+    - text: 原始响应体文本；对于流式响应会是合成后的"最终 JSON 文本"
     """
 
     ok: bool
@@ -32,6 +33,11 @@ class HttpResponse:
     reason: str | None = None
     json: dict[str, Any] | None = None
     text: str | None = None
+
+
+# 流式输出回调类型：(chunk_type, content) -> None
+# chunk_type: "content" | "reasoning" | "tool_call_start" | "tool_call_args"
+StreamCallback = Callable[[str, str], None]
 
 
 class OpenAICompatibleHttpClient:
@@ -86,6 +92,7 @@ class OpenAICompatibleHttpClient:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: Any | None = None,
         step: int | None = None,
+        stream_callback: StreamCallback | None = None,
     ) -> HttpResponse:
         """post_chat_completions 方法。
         
@@ -97,6 +104,8 @@ class OpenAICompatibleHttpClient:
         - messages: 输入的消息列表.
         - tools: 工具列表.
         - tool_choice: 工具选择.
+        - stream_callback: 流式输出回调函数，接收 (chunk_type, content) 参数.
+          chunk_type: "content" | "reasoning" | "tool_call_start" | "tool_call_args"
         
         返回:
         - HttpResponse: 返回模型回复的 HttpResponse 对象.
@@ -168,6 +177,8 @@ class OpenAICompatibleHttpClient:
                     reasoning_parts: list[str] = []
                     finish_reason: str | None = None
                     tool_call_map: dict[int, dict[str, Any]] = {}
+                    # 用于跟踪已输出的tool call，避免重复输出
+                    tool_call_started: set[int] = set()
 
                     for raw_line in resp:
                         try:
@@ -204,10 +215,16 @@ class OpenAICompatibleHttpClient:
                         content = delta.get("content")
                         if isinstance(content, str) and content:
                             text_parts.append(content)
+                            # 流式输出内容
+                            if stream_callback:
+                                stream_callback("content", content)
 
                         reasoning_content = delta.get("reasoning_content")
                         if isinstance(reasoning_content, str) and reasoning_content:
                             reasoning_parts.append(reasoning_content)
+                            # 流式输出推理内容
+                            if stream_callback:
+                                stream_callback("reasoning", reasoning_content)
 
                         tool_calls_delta = delta.get("tool_calls")
 
@@ -234,11 +251,20 @@ class OpenAICompatibleHttpClient:
                                     name = fn.get("name")
                                     if isinstance(name, str) and name:
                                         entry["function"]["name"] = name
+                                        # 流式输出工具调用开始
+                                        if idx not in tool_call_started and stream_callback:
+                                            tool_call_started.add(idx)
+                                            stream_callback("tool_call_start", name)
                                     args = fn.get("arguments")
                                     if isinstance(args, str):
                                         entry["function"]["arguments"] += args
+                                        # 流式输出工具调用参数
+                                        if stream_callback:
+                                            stream_callback("tool_call_args", args)
                                     elif args is not None:
                                         entry["function"]["arguments"] += safe_json_dumps(args)
+                                        if stream_callback:
+                                            stream_callback("tool_call_args", safe_json_dumps(args))
 
                     content_text = "".join(text_parts)
                     if content_text:
@@ -379,9 +405,14 @@ class OpenAICompatibleHttpClient:
                     }
                 )
             )
-            Console.fatal(
-                f"请求模型接口时出错了：HTTP {getattr(e, 'code', 'unknown')}，原因：{reason}"
-            )
+            Console.fatal(f"  模型接口请求失败：HTTP {getattr(e, 'code', 'unknown')}")
+            Console.warn(f"   原因：{reason}")
+            if getattr(e, 'code', 0) == 401:
+                Console.warn("   提示：请检查 API Key 是否正确")
+            elif getattr(e, 'code', 0) == 429:
+                Console.warn("   提示：请求过于频繁，请稍后重试")
+            elif getattr(e, 'code', 0) >= 500:
+                Console.warn("   提示：模型服务端异常，请稍后重试")
             return HttpResponse(
                 ok=False,
                 status=int(getattr(e, "code", 0)) if getattr(e, "code", None) is not None else None,
@@ -411,5 +442,9 @@ class OpenAICompatibleHttpClient:
                     }
                 )
             )
-            Console.fatal(f"模型接口暂时连不上：{e}")
+            Console.fatal(f"  模型接口连接失败：{e}")
+            Console.warn("   可能原因：")
+            Console.warn("   1. 网络连接问题")
+            Console.warn("   2. API 地址配置错误")
+            Console.warn("   3. 模型服务未启动")
             return HttpResponse(ok=False, reason=str(e))

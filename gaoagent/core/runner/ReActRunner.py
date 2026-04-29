@@ -11,7 +11,7 @@ from gaoagent.core.runner.BaseRunner import (
 )
 
 from gaoagent.core.runner.Console import Console
-from gaoagent.core.runner.HttpClient import OpenAICompatibleHttpClient
+from gaoagent.core.runner.HttpClient import OpenAICompatibleHttpClient, StreamCallback
 from gaoagent.core.runner.Tooling import ToolCall, ToolRegistry, default_tool_registry
 from gaoagent.core.runner.Utils import (
     build_multimodal_content,
@@ -110,8 +110,30 @@ class ReActRunner(BaseRunner):
         decision: str,
         content: str | None = None,
         reasoning_content: str | None = None,
+        stream_printed: bool = False,
     ) -> None:
-        """在终端输出本轮 LLM 返回摘要。"""
+        """在终端输出本轮 LLM 返回摘要。
+        
+        参数:
+        - step: 当前步骤号
+        - decision: 决策类型
+        - content: 内容
+        - reasoning_content: 推理内容
+        - stream_printed: 是否已通过流式输出打印过内容
+        """
+        # 如果已流式输出，只打印简短决策摘要
+        if stream_printed:
+            if decision == "tool_calls":
+                Console.info(f"  第{step}步: 决策 → 调用工具")
+            elif decision == "final":
+                Console.info(f"  第{step}步: 决策 → 返回结果")
+            elif decision == "thought":
+                Console.info(f"  第{step}步: 决策 → 继续思考")
+            elif decision == "retry":
+                Console.warn(f"  第{step}步: 决策 → 重试")
+            return
+        
+        # 未流式输出时，打印详细信息
         if isinstance(reasoning_content, str) and reasoning_content.strip():
             Console.info(
                 f"第{step}步: 推理内容 : {reasoning_content.strip()}"
@@ -139,12 +161,24 @@ class ReActRunner(BaseRunner):
         )
 
     @staticmethod
-    def _print_live_tool_call(step: int, tool_name: str, arguments: dict[str, Any]) -> None:
-        """在终端输出工具调用请求。"""
-        args_preview = summarize(safe_json_dumps(arguments), 200)
-        Console.interaction(
-            f"第{step}步: 收到响应 : 准备调工具 {tool_name} | 参数={args_preview}"
-        )
+    def _print_live_tool_call(step: int, tool_name: str, arguments: dict[str, Any], stream_printed: bool = False) -> None:
+        """在终端输出工具调用请求。
+        
+        参数:
+        - step: 当前步骤号
+        - tool_name: 工具名称
+        - arguments: 工具参数
+        - stream_printed: 是否已通过流式输出打印过
+        """
+        if stream_printed:
+            # 流式输出已打印工具名，这里只打印参数摘要
+            args_preview = summarize(safe_json_dumps(arguments), 200)
+            Console.info(f"  ️  第{step}步: 参数 → {args_preview}")
+        else:
+            args_preview = summarize(safe_json_dumps(arguments), 200)
+            Console.interaction(
+                f"第{step}步: 收到响应 : 准备调工具 {tool_name} | 参数={args_preview}"
+            )
 
     @staticmethod
     def _print_live_tool_result(step: int, tool_name: str, observation: Any) -> None:
@@ -158,6 +192,91 @@ class ReActRunner(BaseRunner):
             Console.info(
                 f"第{step}步: 工具跑完了 {tool_name} => {summarize(observation, 240)}"
             )
+
+    @staticmethod
+    def _create_stream_callback(step: int) -> StreamCallback:
+        """创建流式输出回调函数。
+        
+        用途:
+        - 为当前步骤创建流式输出回调，实时打印 LLM 响应内容。
+        
+        参数:
+        - step: 当前步骤号。
+        
+        返回:
+        - StreamCallback: 回调函数，接收 (chunk_type, content) 参数。
+        """
+        state = {
+            "is_reasoning": False,
+            "is_content": False,
+            "is_tool_call": False,
+            "has_output": False,
+            "buffer": "",
+        }
+        
+        def flush_buffer():
+            """刷新缓冲区。"""
+            if state["buffer"]:
+                Console.stream_weak(state["buffer"])
+                state["buffer"] = ""
+        
+        def callback(chunk_type: str, content: str) -> None:
+            if chunk_type == "reasoning":
+                if not state["is_reasoning"]:
+                    flush_buffer()
+                    state["is_reasoning"] = True
+                    state["is_content"] = False
+                    state["is_tool_call"] = False
+                    Console.weak(f"\n    第{step}步 推理过程 ▸")
+                state["buffer"] += content
+                # 按行刷新，保持输出整洁
+                while "\n" in state["buffer"]:
+                    line, state["buffer"] = state["buffer"].split("\n", 1)
+                    Console.stream_weak(line + "\n")
+                state["has_output"] = True
+            elif chunk_type == "content":
+                if state["is_reasoning"] or not state["is_content"]:
+                    flush_buffer()
+                    state["is_reasoning"] = False
+                    state["is_content"] = True
+                    state["is_tool_call"] = False
+                    Console.weak(f"\n    第{step}步 回复内容 ▸")
+                state["buffer"] += content
+                # 按行刷新
+                while "\n" in state["buffer"]:
+                    line, state["buffer"] = state["buffer"].split("\n", 1)
+                    Console.stream_weak(line + "\n")
+                state["has_output"] = True
+            elif chunk_type == "tool_call_start":
+                flush_buffer()
+                state["is_reasoning"] = False
+                state["is_content"] = False
+                if not state["is_tool_call"]:
+                    state["is_tool_call"] = True
+                Console.weak(f"\n  ️  第{step}步 调用工具 ▸ {content}")
+                state["has_output"] = True
+            elif chunk_type == "tool_call_args":
+                if state["is_tool_call"]:
+                    state["buffer"] += content
+                    # JSON参数按块输出
+                    if len(state["buffer"]) > 80:
+                        Console.stream_weak(state["buffer"])
+                        state["buffer"] = ""
+        
+        def reset():
+            """重置状态，用于重试场景。"""
+            flush_buffer()
+            state["is_reasoning"] = False
+            state["is_content"] = False
+            state["is_tool_call"] = False
+            state["has_output"] = False
+            state["buffer"] = ""
+        
+        callback.reset = reset
+        callback.has_output = lambda: state["has_output"]
+        callback.flush = flush_buffer
+        
+        return callback
 
     def __init__(
         self,
@@ -186,6 +305,7 @@ class ReActRunner(BaseRunner):
             mode="react",
             runner_config=cfg,
         )
+        self._current_stream_callback: StreamCallback | None = None
 
     def decide(self, ctx: RunnerContext) -> StepResult:
         """decide 方法。
@@ -267,7 +387,7 @@ class ReActRunner(BaseRunner):
         - 通过 run_logger 记录 step 结果与关键异常，便于线上排障。
         """
         if question is None or not str(question).strip():
-            Console.fatal("这个任务没法跑：问题内容是空的。")
+            Console.fatal("  任务无法执行：问题内容为空，请输入有效的任务描述。")
             return RunResult(success=False, error="Invalid question")
 
         self.runner_context = RunnerContext(step=0, history=[])
@@ -354,7 +474,10 @@ class ReActRunner(BaseRunner):
                     reason_payload,
                     step=0,
                 )
-            Console.fatal("MCP 配好了，但一个能用的工具都没连上。先把 MCP 服务修好再试。")
+            Console.fatal("  MCP 服务连接失败：已配置 MCP 但无法加载任何工具。")
+            Console.warn("   请检查：")
+            Console.warn("   1. MCP 服务是否已启动")
+            Console.warn("   2. 配置是否正确（运行 `gaoagent mcp test` 测试连通性）")
             return RunResult(
                 success=False,
                 error=(
@@ -498,7 +621,8 @@ class ReActRunner(BaseRunner):
                 self.runner_context.history.append(assistant_message)
 
                 if not self.runner_config.tools:
-                    Console.fatal("工具系统没准备好：没找到可用的 ToolRegistry。")
+                    Console.fatal("  工具系统异常：未找到可用的工具注册表。")
+                    Console.warn("   请尝试重新初始化项目：`gaoagent init`")
                     if id:
                         save_history(id, self.runner_context.history)
                     return RunResult(success=False, error="No tool registry configured")
@@ -528,7 +652,12 @@ class ReActRunner(BaseRunner):
                             }
                         )
                     else:
-                        self._print_live_tool_call(step, name, arguments)
+                        stream_printed = (
+                            self._current_stream_callback.has_output()
+                            if self._current_stream_callback
+                            else False
+                        )
+                        self._print_live_tool_call(step, name, arguments, stream_printed=stream_printed)
                         try:
                             # 路由顺序：
                             # 1) 先走内置 ToolRegistry（本地工具）
@@ -557,7 +686,7 @@ class ReActRunner(BaseRunner):
                                     else None
                                 )
                                 if not isinstance(server_name, str) or not isinstance(tool_name, str) or not isinstance(server_cfg, dict):
-                                    Console.fatal(f"MCP 工具映射不完整，调用不了：{name}")
+                                    Console.fatal(f"  MCP 工具配置异常：{name} 的映射信息不完整")
                                     observation = {
                                         "success": False,
                                         "error": {
@@ -589,7 +718,8 @@ class ReActRunner(BaseRunner):
                                         "result": observation,
                                     }
                             else:
-                                Console.fatal(f"模型想调用不存在的工具：{name}")
+                                Console.fatal(f"  未知工具：模型尝试调用不存在的工具 `{name}`")
+                                Console.warn(f"   可用工具：{', '.join(self.runner_config.tools.list_names()) if self.runner_config.tools else '无'}")
                                 observation = {
                                     "success": False,
                                     "error": {
@@ -598,7 +728,8 @@ class ReActRunner(BaseRunner):
                                     },
                                 }
                         except Exception as e:
-                            Console.fatal(f"工具调用失败了：{name}，错误：{e}")
+                            Console.fatal(f"  工具执行失败：{name}")
+                            Console.warn(f"   错误详情：{e}")
                             observation = {
                                 "success": False,
                                 "error": {"type": type(e).__name__, "message": str(e)},
@@ -662,9 +793,18 @@ class ReActRunner(BaseRunner):
                 if isinstance(reasoning_content, str) and reasoning_content:
                     assistant_message["reasoning_content"] = reasoning_content
                 self.runner_context.history.append(assistant_message)
-                Console.info(
-                    f"第{step}步: 思考中 : {summarize(assistant_content, 240)}"
+                # 如果已流式输出，只打印简短摘要
+                stream_printed = (
+                    self._current_stream_callback.has_output()
+                    if self._current_stream_callback
+                    else False
                 )
+                if stream_printed:
+                    Console.info(f"  第{step}步: 决策 → 继续思考")
+                else:
+                    Console.info(
+                        f"第{step}步: 思考中 : {summarize(assistant_content, 240)}"
+                    )
                 Console.debug(
                     safe_json_dumps(
                         {
@@ -701,7 +841,9 @@ class ReActRunner(BaseRunner):
                     save_history(id, self.runner_context.history)
                 return RunResult(success=True, final_result=now_step.content)
 
-        Console.fatal("任务跑到最大步数了，还没拿到最终结果。")
+        Console.fatal(f"  任务执行超限：已达到最大步数 ({self.runner_config.max_steps})，仍未获得最终结果。")
+        Console.warn("   可能原因：任务过于复杂或模型陷入循环")
+        Console.warn("   建议：尝试简化任务描述，或使用 `--mode plan` 进行任务拆解")
         if id:
             save_history(id, self.runner_context.history)
         return RunResult(success=False, error="Max steps reached")
@@ -759,7 +901,8 @@ class ReActRunner(BaseRunner):
         - 与 `run()` 共用同一份 MCP 工具可见集，保证“可见即可调、可调即可见”。
         """
         if not self.request_base_info:
-            Console.fatal("没拿到可用的 API 配置，模型请求发不出去。")
+            Console.fatal("  API 配置缺失：无法获取模型接口配置。")
+            Console.warn("   请运行 `gaoagent api add` 添加 API 配置")
             return StepResult(decision="final", content="No valid API configuration")
 
         client = OpenAICompatibleHttpClient(
@@ -802,13 +945,27 @@ class ReActRunner(BaseRunner):
                     }
                 )
             )
+            # 创建流式输出回调（重试时重置状态）
+            if attempt == 1:
+                stream_callback = self._create_stream_callback(ctx.step)
+            else:
+                stream_callback.reset()
+            
+            # 保存到实例变量，供run方法使用
+            self._current_stream_callback = stream_callback
+            
             response = client.post_chat_completions(
                 model=self.request_base_info.modules,
                 messages=ctx.history,
                 tools=tools,
                 tool_choice=tool_choice,
                 step=ctx.step,
+                stream_callback=stream_callback,
             )
+            # 刷新流式输出缓冲区
+            stream_callback.flush()
+            if stream_callback.has_output():
+                Console.info("")
             step_result = parse_llm_response(response)
             last_step = step_result
             payload = step_result.raw.get("payload") if isinstance(step_result.raw, dict) else None
@@ -829,6 +986,7 @@ class ReActRunner(BaseRunner):
                 step_result.decision,
                 step_result.content,
                 reasoning_content if isinstance(reasoning_content, str) else None,
+                stream_printed=stream_callback.has_output(),
             )
             Console.debug(
                 safe_json_dumps(
@@ -865,9 +1023,9 @@ class ReActRunner(BaseRunner):
         raw = dict(last_step.raw) if last_step is not None and isinstance(last_step.raw, dict) else {}
         raw["_retry"] = {"attempts": max_attempts, "reason": "invalid_llm_output"}
         last_content = (last_step.content or "") if last_step is not None else ""
-        Console.fatal(
-            f"模型连续返回了不可执行内容，重试 {max_attempts} 次还是没成功。"
-        )
+        Console.fatal(f"  模型响应异常：连续 {max_attempts} 次返回无法执行的内容。")
+        Console.warn("   可能原因：模型不支持当前工具调用协议")
+        Console.warn("   建议：检查模型是否支持 Function Calling，或更换模型重试")
         return StepResult(
             decision="final",
             content=(

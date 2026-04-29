@@ -22,8 +22,8 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from gaoagent.core.runner.HttpClient import HttpResponse
-    from gaoagent.core.runner.BaseRunner import RequestBaseInfo, StepResult
+    from gaoagent.core.runner.http_client import HttpResponse
+    from gaoagent.core.runner.base_runner import RequestBaseInfo, StepResult
 
 
 PROJECTS_REGISTRY_FILENAME = "inited_projects.txt"
@@ -175,7 +175,7 @@ def load_project_registry_paths() -> list[Path]:
     返回:
     - list[Path]: 返回项目注册文件中记录的项目路径列表。
     """
-    registry_file = global_config_dir() / _PROJECTS_REGISTRY_FILENAME
+    registry_file = global_config_dir() / PROJECTS_REGISTRY_FILENAME
     if not registry_file.exists() or not registry_file.is_file():
         return []
     try:
@@ -281,7 +281,7 @@ def load_request_base_info(
     - `default_model` 缺失或非法时，回退到该 API 的第一个可用模型；
     - 配置结构不合法或缺失关键节点时返回 `None`。
     """
-    from gaoagent.core.runner.BaseRunner import RequestBaseInfo
+    from gaoagent.core.runner.base_runner import RequestBaseInfo
 
     path = _find_config_file("gao_client_api_config.json")
     if path is None:
@@ -691,9 +691,9 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
     返回:
     - StepResult: 统一后的单步决策结果。
     """
-    from gaoagent.core.runner.HttpClient import HttpResponse
-    from gaoagent.core.runner.BaseRunner import StepResult
-    from gaoagent.core.runner.Console import Console
+    from gaoagent.core.runner.http_client import HttpResponse
+    from gaoagent.core.runner.base_runner import StepResult
+    from gaoagent.core.runner.console import Console
 
     if not isinstance(response, HttpResponse):
         Console.fatal(f"模型返回类型不对，收到的是：{type(response).__name__}。")
@@ -764,7 +764,7 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
             raw={"http": {"ok": True, "status": response.status}, "text": text},
         )
 
-    from gaoagent.core.runner.FunctionCallProtocol import (
+    from gaoagent.core.runner.function_call_protocol import (
         map_chat_completion_to_protocol,
     )
 

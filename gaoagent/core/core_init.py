@@ -3,15 +3,20 @@ from pathlib import Path
 from typing import Any
 
 import click
-from gaoagent.core.runner.Console import Console
+from gaoagent.core.runner.console import Console
 import json
-import shutil
 import datetime
-from gaoagent.core.runner.Utils import PROJECTS_REGISTRY_FILENAME
+from gaoagent.core.runner.utils import PROJECTS_REGISTRY_FILENAME
+from gaoagent.core.handler_utils import (
+    write_json,
+    copy_dir,
+    rewrite_index_meta_store_dir,
+    prompt_multi_select,
+)
 
-from gaoagent.core.CoreConfigDefault import CoreConfigDefault
-from gaoagent.mcp.MCPClientCompat import MCPStdioClientSync, build_mcp_tools_cache_payload
-from gaoagent.rag.RagStorePath import (
+from gaoagent.core.core_config_default import CoreConfigDefault
+from gaoagent.mcp.mcp_client_compat import MCPStdioClientSync, build_mcp_tools_cache_payload
+from gaoagent.rag.rag_store_path import (
     resolve_chroma_store_dir,
     resolve_index_meta_file,
     is_internal_rag_store_dir_name,
@@ -86,13 +91,13 @@ class CoreInit:
 
         (default_api, default_model) = self._prompt_default_api_and_model(apis)
         project_api_file = project_dir / "gao_client_api_config.json"
-        self._write_json(project_api_file, {"default_api": default_api, "default_model": default_model, "apis": apis})
+        write_json(project_api_file, {"default_api": default_api, "default_model": default_model, "apis": apis})
         Console.info(f"已写入项目 API 配置：{project_api_file}")
 
         project_mcp_file = project_dir / "gao_client_mcp_setting.json"
         mcp_configs = self._load_global_mcp_configs(config_default, global_mcp_file)
         selected_mcp = self._prompt_select_mcp(mcp_configs)
-        self._write_json(project_mcp_file, {"mcpServers": selected_mcp})
+        write_json(project_mcp_file, {"mcpServers": selected_mcp})
         Console.info(f"已写入项目 MCP 配置：{project_mcp_file}")
         project_mcp_cache_file = project_dir / "gao_client_mcp_tools_cache.json"
         if selected_mcp:
@@ -105,7 +110,7 @@ class CoreInit:
                     ).list_tools(),
                     generated_at=datetime.datetime.now(datetime.UTC).isoformat(),
                 )
-                self._write_json(project_mcp_cache_file, cache_payload)
+                write_json(project_mcp_cache_file, cache_payload)
                 tool_count = len((cache_payload.get("exported_map") or {}).keys())
                 Console.info(f"已写入项目 MCP 工具缓存：{project_mcp_cache_file}（{tool_count} 个工具）")
             except Exception as e:
@@ -118,7 +123,7 @@ class CoreInit:
             installed_count = 0
             for item in selected_skills:
                 dst = project_skills_dir / item["name"]
-                self._copy_dir(item["src_dir"], dst)
+                copy_dir(item["src_dir"], dst)
                 installed_count += 1
             Console.info(f"已复制 Skills：{installed_count} 个 → {project_skills_dir}")
         else:
@@ -132,12 +137,12 @@ class CoreInit:
             for kb_name in selected_rag:
                 src = global_rag_dir / kb_name
                 dst = project_rag_dir / kb_name
-                self._copy_dir(src, dst)
+                copy_dir(src, dst)
                 src_store_dir = resolve_chroma_store_dir(kb_dir=src, kb_name=kb_name)
                 dst_store_dir = resolve_chroma_store_dir(kb_dir=dst, kb_name=kb_name)
                 if src_store_dir.exists() and src_store_dir.is_dir():
-                    self._copy_dir(src_store_dir, dst_store_dir)
-                    self._rewrite_index_meta_store_dir(kb_dir=dst, kb_name=kb_name)
+                    copy_dir(src_store_dir, dst_store_dir)
+                    rewrite_index_meta_store_dir(kb_dir=dst, kb_name=kb_name)
                 imported_count += 1
             Console.info(f"已复制 RAG 知识库：{imported_count} 个 → {project_rag_dir}")
         else:
@@ -147,7 +152,7 @@ class CoreInit:
         a2a_configs = self._load_global_a2a_configs(config_default, global_a2a_file)
         selected_a2a = self._prompt_select_a2a(a2a_configs)
         if selected_a2a:
-            self._write_json(project_a2a_file, {"agents": selected_a2a})
+            write_json(project_a2a_file, {"agents": selected_a2a})
             Console.info(f"已写入项目 A2A Agent 配置：{project_a2a_file}")
         else:
             Console.info("未选择任何 A2A Agent（已跳过）")
@@ -279,7 +284,7 @@ class CoreInit:
         for i, name in enumerate(names, start=1):
             Console.info(f"{i}. {name}")
 
-        selected = self._prompt_multi_select("请选择 A2A Agent（输入序号或名称，逗号分隔；回车跳过；输入 all 选择全部）", names)
+        selected = prompt_multi_select("请选择 A2A Agent（输入序号或名称，逗号分隔；回车跳过；输入 all 选择全部）", names)
         if not selected:
             return {}
 
@@ -303,7 +308,7 @@ class CoreInit:
         for i, name in enumerate(names, start=1):
             Console.info(f"{i}. {name}")
 
-        selected = self._prompt_multi_select("请选择 MCP（输入序号或名称，逗号分隔；回车跳过；输入 all 选择全部）", names)
+        selected = prompt_multi_select("请选择 MCP（输入序号或名称，逗号分隔；回车跳过；输入 all 选择全部）", names)
         if not selected:
             return {}
 
@@ -340,7 +345,7 @@ class CoreInit:
             Console.info(f"{i}. {item['name']}: {item['description']}")
 
         names = [item["name"] for item in skills]
-        selected_names = self._prompt_multi_select(
+        selected_names = prompt_multi_select(
             "请选择 Skill（输入序号或名称，逗号分隔；回车跳过；输入 all 选择全部）", names
         )
         if not selected_names:
@@ -372,109 +377,9 @@ class CoreInit:
         for i, name in enumerate(names, start=1):
             Console.info(f"{i}. {name}")
 
-        return self._prompt_multi_select(
+        return prompt_multi_select(
             "请选择 RAG 知识库（输入序号或名称，逗号分隔；回车跳过；输入 all 选择全部）",
             names,
-        )
-
-    def _prompt_multi_select(self, prompt: str, options: list[str]) -> list[str]:
-        """通用多选输入解析器（支持序号、名称与全选）。
-
-        输入规则:
-        - 回车: 返回空列表（表示跳过）。
-        - `all`/`*`: 返回全部选项。
-        - `1,3` 或 `nameA,nameB`: 支持逗号分隔混合输入。
-        - 非法输入会提示并重试，直到获得合法结果。
-
-        返回:
-        - 去重且保持输入顺序的选项列表。
-        """
-        if not options:
-            return []
-
-        while True:
-            raw = Console.prompt(prompt, type=str, default="", show_default=False).strip()
-            if raw == "":
-                return []
-
-            lowered = raw.lower()
-            if lowered in ("all", "*"):
-                return options
-
-            parts = [p.strip() for p in raw.split(",") if p.strip()]
-            selected: list[str] = []
-            ok = True
-            for part in parts:
-                if part.isdigit():
-                    idx = int(part)
-                    if idx < 1 or idx > len(options):
-                        ok = False
-                        break
-                    selected.append(options[idx - 1])
-                    continue
-
-                match = None
-                for opt in options:
-                    if opt.lower() == part.lower():
-                        match = opt
-                        break
-                if match is None:
-                    ok = False
-                    break
-                selected.append(match)
-
-            if ok:
-                deduped: list[str] = []
-                seen: set[str] = set()
-                for item in selected:
-                    if item in seen:
-                        continue
-                    seen.add(item)
-                    deduped.append(item)
-                return deduped
-
-            Console.info("输入不合法，请重新输入")
-
-    def _write_json(self, file_path: Path, payload: Any) -> None:
-        """以“临时文件替换”方式原子写入 JSON 文件。
-
-        目的:
-        - 避免直接覆盖目标文件时出现部分写入，提升配置写入稳定性。
-        """
-        tmp_file = file_path.with_name(f"{file_path.name}.tmp")
-        tmp_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-        tmp_file.replace(file_path)
-
-    def _copy_dir(self, src: Path, dst: Path) -> None:
-        """复制目录到目标路径；若目标已存在则先删除后复制。
-
-        说明:
-        - 使用“覆盖式复制”保证目标内容与源目录一致，避免增量残留脏文件。
-        """
-        if dst.exists():
-            shutil.rmtree(dst)
-        shutil.copytree(src, dst)
-
-    def _rewrite_index_meta_store_dir(self, *, kb_dir: Path, kb_name: str) -> None:
-        """修正 `index_meta.json` 中的 `store_dir` 到当前项目实际路径。
-
-        使用场景:
-        - 从全局目录复制知识库到项目目录后，原 `store_dir` 往往仍指向旧位置。
-        - 本方法确保元数据指向新目录，避免后续查询仍访问旧存储。
-        """
-        meta_file = resolve_index_meta_file(kb_dir=kb_dir, kb_name=kb_name)
-        if not meta_file.exists() or not meta_file.is_file():
-            return
-        try:
-            data = json.loads(meta_file.read_text(encoding="utf-8"))
-        except Exception:
-            return
-        if not isinstance(data, dict):
-            return
-        data["store_dir"] = str(resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_name).resolve())
-        meta_file.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
-            encoding="utf-8",
         )
 
     def _ensure_gitignore_contains(self, project_root: Path, entry: str) -> None:

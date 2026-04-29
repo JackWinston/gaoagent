@@ -13,12 +13,13 @@ import sqlite3
 import urllib.request
 import urllib.error
 
-from gaoagent.rag.RagStorePath import (
+from gaoagent.rag.rag_store_path import (
     resolve_chroma_store_dir,
     resolve_index_meta_file,
     resolve_bm25_index_db,
 )
-from gaoagent.core.runner.Console import Console
+from gaoagent.core.handler_utils import tokenize_for_bm25, sanitize_collection_name
+from gaoagent.core.runner.console import Console
 
 
 @dataclass
@@ -126,7 +127,7 @@ class RagChromaIndexer:
         # 将 Chroma 数据存放到 ASCII 安全路径，规避中文目录下 HNSW 文件异常。
         store_dir = resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_name)
         store_dir.mkdir(parents=True, exist_ok=True)
-        collection_name = self._sanitize_collection_name(kb_name)
+        collection_name = sanitize_collection_name(kb_name)
 
         client: Any | None = None
         try:
@@ -258,7 +259,7 @@ class RagChromaIndexer:
 
         store_dir = resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_name)
         store_dir.mkdir(parents=True, exist_ok=True)
-        collection_name = self._sanitize_collection_name(kb_name)
+        collection_name = sanitize_collection_name(kb_name)
         bm25_index_db = resolve_bm25_index_db(kb_dir=kb_dir, kb_name=kb_name)
 
         client: Any | None = None
@@ -613,7 +614,7 @@ class RagChromaIndexer:
                 text = str(item.get("document") or "")
                 meta = item.get("metadata")
                 metadata = dict(meta) if isinstance(meta, dict) else {}
-                tokens = self._tokenize_for_bm25(text)
+                tokens = tokenize_for_bm25(text)
                 tf = Counter(tokens)
                 doc_rows.append((cid, text, json.dumps(metadata, ensure_ascii=False), len(tokens)))
                 for term, term_tf in tf.items():
@@ -661,7 +662,7 @@ class RagChromaIndexer:
                 text = str(item.get("document") or "")
                 meta = item.get("metadata")
                 metadata = dict(meta) if isinstance(meta, dict) else {}
-                tokens = self._tokenize_for_bm25(text)
+                tokens = tokenize_for_bm25(text)
                 tf = Counter(tokens)
                 doc_rows.append((cid, text, json.dumps(metadata, ensure_ascii=False), len(tokens)))
                 for term, term_tf in tf.items():
@@ -724,35 +725,6 @@ class RagChromaIndexer:
                 return {"bm25_docs", "bm25_terms", "bm25_meta"}.issubset(names)
         except Exception:
             return False
-
-    def _tokenize_for_bm25(self, text: str) -> list[str]:
-        """轻量 BM25 分词：英文按词，中文按单字。"""
-        normalized = str(text or "").lower()
-        tokens: list[str] = []
-        for seg in re.findall(r"[\u4e00-\u9fff]+|[a-z0-9_]+", normalized):
-            if re.fullmatch(r"[\u4e00-\u9fff]+", seg):
-                tokens.extend(list(seg))
-            else:
-                tokens.append(seg)
-        return tokens
-
-    def _sanitize_collection_name(self, kb_name: str) -> str:
-        """将知识库名转换为 Chroma 可接受的 collection 名称。"""
-        # Chroma 约束：
-        # - 仅允许 [a-zA-Z0-9._-]
-        # - 首尾必须是 [a-zA-Z0-9]
-        raw = kb_name.strip()
-        base = re.sub(r"[^a-zA-Z0-9._-]+", "_", raw)
-        base = re.sub(r"_+", "_", base)
-        base = base.strip("._-")
-        if not base:
-            base = "default"
-
-        # 限制长度并再次确保首尾合法，避免截断后尾部变成符号。
-        base = base[:120].strip("._-")
-        if not base:
-            base = "default"
-        return f"kb_{base}"
 
     def _use_remote_embedding(self) -> bool:
         """判断当前配置是否启用远程 embedding 模式。"""

@@ -4,7 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from gaoagent.rag.RagHandlers import RagHandlers
+from gaoagent.rag.rag_handlers import RagHandlers
+from gaoagent.core.handler_utils import rewrite_index_meta_store_dir
 
 
 class TestRagListKbNames(unittest.TestCase):
@@ -33,7 +34,7 @@ class TestRagListKbNames(unittest.TestCase):
 
 class TestRagRewriteIndexMetaStoreDir(unittest.TestCase):
     def test_rewrites_store_dir(self) -> None:
-        from gaoagent.rag.RagStorePath import resolve_chroma_store_dir
+        from gaoagent.rag.rag_store_path import resolve_chroma_store_dir
         with tempfile.TemporaryDirectory() as tmpdir:
             kb_dir = Path(tmpdir) / "test_kb"
             kb_dir.mkdir()
@@ -42,7 +43,7 @@ class TestRagRewriteIndexMetaStoreDir(unittest.TestCase):
             meta_file = store_dir / "index_meta.json"
             meta_file.write_text('{"kb_name": "test_kb", "store_dir": "/old/path"}')
             h = RagHandlers()
-            h._rewrite_index_meta_store_dir(kb_dir=kb_dir, kb_name="test_kb")
+            rewrite_index_meta_store_dir(kb_dir=kb_dir, kb_name="test_kb")
             import json
             data = json.loads(meta_file.read_text())
             self.assertNotEqual(data["store_dir"], "/old/path")
@@ -52,7 +53,7 @@ class TestRagRewriteIndexMetaStoreDir(unittest.TestCase):
             kb_dir = Path(tmpdir) / "test_kb"
             kb_dir.mkdir()
             h = RagHandlers()
-            h._rewrite_index_meta_store_dir(kb_dir=kb_dir, kb_name="test_kb")
+            rewrite_index_meta_store_dir(kb_dir=kb_dir, kb_name="test_kb")
 
 
 if __name__ == "__main__":

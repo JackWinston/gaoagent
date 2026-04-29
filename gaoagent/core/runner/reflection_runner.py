@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from gaoagent.core.runner.BaseRunner import BaseRunner, RunResult, RunnerConfig, StepResult, RunnerContext
-from gaoagent.core.runner.Console import Console
-from gaoagent.core.runner.HttpClient import OpenAICompatibleHttpClient
-from gaoagent.core.runner.PromptBuilder import build_reflection_evaluation_prompt
+from gaoagent.core.runner.base_runner import BaseRunner, RunResult, RunnerConfig, StepResult, RunnerContext
+from gaoagent.core.runner.console import Console
+from gaoagent.core.runner.http_client import OpenAICompatibleHttpClient
+from gaoagent.core.runner.prompt_builder import build_reflection_evaluation_prompt
 
 
 class ReflectionRunner(BaseRunner):
@@ -45,7 +45,7 @@ class ReflectionRunner(BaseRunner):
         核心反思流程：接受原始问题和初次执行结果，评估是否完成。
         如果未完成，则基于反思建议让 target_runner 重新执行。
         """
-        from gaoagent.core.runner.Utils import save_runner_state
+        from gaoagent.core.runner.utils import save_runner_state
 
         current_question = question
         last_result = result
@@ -125,7 +125,7 @@ class ReflectionRunner(BaseRunner):
 
         Console.info(f"\n>>> [Reflection] 开始执行初始任务...")
         
-        from gaoagent.core.runner.Utils import load_runner_state
+        from gaoagent.core.runner.utils import load_runner_state
         
         state = load_runner_state(id, "reflection") if id else None
         

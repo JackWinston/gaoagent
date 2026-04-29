@@ -5,8 +5,9 @@ from pathlib import Path
 from typing import Any
 
 import click
-from gaoagent.core.runner.Console import Console
-from gaoagent.core.runner.Utils import try_project_root_dir
+from gaoagent.core.runner.console import Console
+from gaoagent.core.runner.utils import try_project_root_dir
+from gaoagent.core.handler_utils import read_json_file, write_json, prompt_non_empty_str, prompt_positive_int
 
 
 class ApiHandlers:
@@ -166,12 +167,7 @@ class ApiHandlers:
 
     def _read_json_file(self, file_path: Path) -> Any | None:
         """读取 JSON 文件。"""
-        if not file_path.exists() or not file_path.is_file():
-            return None
-        try:
-            return json.loads(file_path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
+        return read_json_file(file_path)
 
     def _load_api_payload(self, file_path: Path) -> dict[str, Any]:
         """读取 API 配置并做结构标准化。"""
@@ -190,13 +186,7 @@ class ApiHandlers:
 
     def _write_api_payload(self, file_path: Path, payload: dict[str, Any]) -> None:
         """原子写入 API 配置文件。"""
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = file_path.with_name(f"{file_path.name}.tmp")
-        tmp.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        tmp.replace(file_path)
+        write_json(file_path, payload)
 
     def _prompt_api_body(self, *, existing: dict[str, Any] | None) -> dict[str, Any]:
         """交互采集 API 配置体（base_url/api_key/models）。"""
@@ -269,16 +259,8 @@ class ApiHandlers:
 
     def _prompt_non_empty_str(self, text: str) -> str:
         """获取非空字符串输入。"""
-        while True:
-            value = Console.prompt(text, type=str).strip()
-            if value:
-                return value
-            Console.info("输入不能为空，请重新输入")
+        return prompt_non_empty_str(text)
 
     def _prompt_positive_int(self, text: str, *, default: int) -> int:
         """获取正整数输入。"""
-        while True:
-            value = Console.prompt(text, type=int, default=default, show_default=True)
-            if value > 0:
-                return value
-            Console.info("请输入正整数")
+        return prompt_positive_int(text, default=default)

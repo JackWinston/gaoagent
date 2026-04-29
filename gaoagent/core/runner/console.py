@@ -8,7 +8,7 @@ from rich.console import Console as RichConsole
 from rich.text import Text
 from rich.theme import Theme
 
-from gaoagent.core.runner.Utils import global_config_dir
+from gaoagent.core.runner.utils import global_config_dir
 
 # 自定义主题
 _theme = Theme({
@@ -27,6 +27,7 @@ _theme = Theme({
 
 # 全局 Rich Console 实例
 _rich = RichConsole(theme=_theme, highlight=False)
+_rich_err = RichConsole(theme=_theme, highlight=False, stderr=True)
 
 
 class Console:
@@ -45,14 +46,8 @@ class Console:
     @staticmethod
     def echo(message: Any = "", *, err: bool = False, nl: bool = True) -> None:
         """输出一条控制台消息。"""
-        if err:
-            _rich.stderr = True
-            try:
-                _rich.print(message, end="\n" if nl else "")
-            finally:
-                _rich.stderr = False
-        else:
-            _rich.print(message, end="\n" if nl else "")
+        target = _rich_err if err else _rich
+        target.print(message, end="\n" if nl else "")
 
     @staticmethod
     def print(message: Any = "", *, err: bool = False, nl: bool = True) -> None:
@@ -67,11 +62,7 @@ class Console:
     @staticmethod
     def error(message: Any) -> None:
         """输出错误信息（红色，标准错误流）。"""
-        _rich.stderr = True
-        try:
-            _rich.print(f"[error]{message}[/error]")
-        finally:
-            _rich.stderr = False
+        _rich_err.print(f"[error]{message}[/error]")
 
     @staticmethod
     def weak(message: Any) -> None:
@@ -91,11 +82,7 @@ class Console:
     @staticmethod
     def fatal(message: Any) -> None:
         """输出导致程序终止的错误信息（红色）。"""
-        _rich.stderr = True
-        try:
-            _rich.print(f"[fatal]{message}[/fatal]")
-        finally:
-            _rich.stderr = False
+        _rich_err.print(f"[fatal]{message}[/fatal]")
 
     @staticmethod
     def debug(message: Any) -> None:

@@ -4,7 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from gaoagent.skills.SkillsHandlers import SkillsHandlers
+from gaoagent.skills.skills_handlers import SkillsHandlers
+from gaoagent.core.handler_utils import copy_dir
 
 
 class TestSkillsResolveScopeAndPaths(unittest.TestCase):
@@ -26,7 +27,7 @@ class TestSkillsCopyDir(unittest.TestCase):
             src.mkdir()
             (src / "file.txt").write_text("hello")
             h = SkillsHandlers()
-            h._copy_dir(src, dst)
+            copy_dir(src, dst)
             self.assertTrue((dst / "file.txt").exists())
             self.assertEqual((dst / "file.txt").read_text(), "hello")
 
@@ -39,7 +40,7 @@ class TestSkillsCopyDir(unittest.TestCase):
             (src / "new.txt").write_text("new")
             (dst / "old.txt").write_text("old")
             h = SkillsHandlers()
-            h._copy_dir(src, dst)
+            copy_dir(src, dst)
             self.assertTrue((dst / "new.txt").exists())
             self.assertFalse((dst / "old.txt").exists())
 

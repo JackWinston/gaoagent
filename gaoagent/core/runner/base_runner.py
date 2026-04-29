@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 from dataclasses import dataclass, field
-from gaoagent.core.runner.Tooling import ToolRegistry
-from gaoagent.core.runner.Utils import load_request_base_info
+from gaoagent.core.runner.tooling import ToolRegistry
+from gaoagent.core.runner.utils import load_request_base_info
 
 Mode = Literal["plan", "react", "retry"]
 Decision = Literal["final", "tool_calls", "thought", "retry"]
@@ -107,7 +107,7 @@ class BaseRunner:
         self.mode: Mode = mode
         self.runner_config = runner_config
         self.runner_context = RunnerContext(step=0, history=[])
-        self.request_base_info = request_base_info or _getDefaultRequestBaseInfo()
+        self.request_base_info = request_base_info or _get_default_request_base_info()
 
     def decide(self, ctx: RunnerContext) -> StepResult:
         """
@@ -133,10 +133,10 @@ class BaseRunner:
         raise NotImplementedError("BaseRunner 是一个抽象类, 请实现 run 方法")
 
 
-def _getDefaultRequestBaseInfo() -> RequestBaseInfo | None:
+def _get_default_request_base_info() -> RequestBaseInfo | None:
     # 从本地环境变量或者配置文件中获取默认的 RequestBaseInfo
     """
-    _getDefaultRequestBaseInfo 函数。
+    _get_default_request_base_info 函数。
     用途:
     - 加载默认的请求基础信息, 用于初始化 Runner 时使用.
     

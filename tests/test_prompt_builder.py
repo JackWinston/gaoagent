@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from gaoagent.core.runner.PromptBuilder import (
+from gaoagent.core.runner.prompt_builder import (
     build_system_prompt,
     build_plan_system_text,
     build_reflection_evaluation_prompt,

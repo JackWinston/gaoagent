@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from gaoagent.core.runner.ReActRunner import ReActRunner
+from gaoagent.core.runner.react_runner import ReActRunner
 
 
 class TestEnabledMcpServers(unittest.TestCase):
@@ -76,7 +76,7 @@ class TestReActRunnerInit(unittest.TestCase):
         self.assertIsNotNone(runner.runner_config.tools)
 
     def test_custom_config(self) -> None:
-        from gaoagent.core.runner.BaseRunner import RunnerConfig
+        from gaoagent.core.runner.base_runner import RunnerConfig
         cfg = RunnerConfig(max_steps=10, llm_invalid_retry=1)
         runner = ReActRunner(config=cfg)
         self.assertEqual(runner.runner_config.max_steps, 10)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock
 
-from gaoagent.core.runner.BaseRunner import (
+from gaoagent.core.runner.base_runner import (
     RunResult, RunnerContext, RunnerConfig, StepResult, RequestBaseInfo, BaseRunner
 )
 

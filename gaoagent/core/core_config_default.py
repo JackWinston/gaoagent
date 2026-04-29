@@ -6,17 +6,19 @@ import json
 import shutil
 import time
 import click
-from gaoagent.core.runner.Console import Console
+from gaoagent.core.runner.console import Console
 
-from gaoagent.mcp.MCPClientCompat import (
+from gaoagent.core.handler_utils import read_json_file, write_json, prompt_non_empty_str, prompt_positive_int
+
+from gaoagent.mcp.mcp_client_compat import (
     MCPStdioClientSync,
     build_mcp_tools_cache_payload,
     write_mcp_tools_cache,
 )
-from gaoagent.core.runner.Utils import scan_skills_metadata
-from gaoagent.rag.RagApiConfig import RagApiConfigStore
-from gaoagent.rag.RagChromaIndexer import RagChromaIndexer, RagChromaIndexerConfig
-from gaoagent.rag.RagStorePath import resolve_chroma_store_dir, resolve_index_meta_file
+from gaoagent.core.runner.utils import scan_skills_metadata
+from gaoagent.rag.rag_api_config import RagApiConfigStore
+from gaoagent.rag.rag_chroma_indexer import RagChromaIndexer, RagChromaIndexerConfig
+from gaoagent.rag.rag_store_path import resolve_chroma_store_dir, resolve_index_meta_file
 
 
 class CoreConfigDefault:
@@ -120,9 +122,9 @@ class CoreConfigDefault:
             except Exception as e:
                 Console.info(f"MCP 工具缓存更新失败：{e}")
 
-        isInitSkills = self._import_skills_config()
+        is_init_skills = self._import_skills_config()
 
-        if isInitSkills:
+        if is_init_skills:
             skills_dir = Path.home() / ".gaoagent" / "skills"
             (skills, invalid_skills) = self._load_skills_metadata(skills_dir)
             Console.info(f"Skills 配置采集完成，共 {len(skills)} 个")
@@ -173,19 +175,8 @@ class CoreConfigDefault:
                     return None
 
     def _write_json(self, file_path: Path, payload: Any) -> None:
-        """_write_json 方法。
-        
-        用途:
-        - 写入指定 JSON 文件的内容。
-        
-        参数:
-        - file_path: 输入参数，指定要写入的 JSON 文件路径。
-        - payload: 输入参数，指定要写入的 JSON 内容。
-        
-        """
-        tmp_file = file_path.with_name(f"{file_path.name}.tmp")
-        tmp_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-        tmp_file.replace(file_path)
+        """写入 JSON 文件（委托公共实现）。"""
+        write_json(file_path, payload)
 
     def _write_api_config(self, apis: dict[str, Any]) -> None:
         """
@@ -298,7 +289,7 @@ class CoreConfigDefault:
 
             return value
 
-    def _import_skills_config(self) -> bool :
+    def _import_skills_config(self) -> bool:
         """
         引导用户输入技能相关配置。
         """
@@ -312,7 +303,7 @@ class CoreConfigDefault:
         Console.info(f"请将Skills对应的md文件复制到 {skills_dir}")
         return Console.confirm("是否已经完成?", default=False)
 
-    def _import_rag_config(self) -> bool :
+    def _import_rag_config(self) -> bool:
         """
         引导用户输入 RAG 相关配置。
         """
@@ -618,24 +609,12 @@ class CoreConfigDefault:
 
     
     def _prompt_non_empty_str(self, text: str, *, hide_input: bool = False) -> str:
-        """
-        获取非空字符串输入；为空则提示并重新输入。
-        """
-        while True:
-            value = Console.prompt(text, type=str, hide_input=hide_input).strip()
-            if value:
-                return value
-            Console.info("输入不能为空，请重新输入")
+        """获取非空字符串输入；为空则提示并重新输入。"""
+        return prompt_non_empty_str(text, hide_input=hide_input)
 
     def _prompt_positive_int(self, text: str, *, default: int, show_default: bool = True) -> int:
-        """
-        获取正整数输入；非正整数则提示并重新输入。
-        """
-        while True:
-            value = Console.prompt(text, type=int, default=default, show_default=show_default)
-            if value > 0:
-                return value
-            Console.info("请输入正整数")
+        """获取正整数输入；非正整数则提示并重新输入。"""
+        return prompt_positive_int(text, default=default, show_default=show_default)
 
 
     def _validate_mcp_config(self, config: dict[str, Any]) -> None:

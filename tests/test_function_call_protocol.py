@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from gaoagent.core.runner.FunctionCallProtocol import (
+from gaoagent.core.runner.function_call_protocol import (
     build_function_specs,
     map_chat_completion_to_protocol
 )

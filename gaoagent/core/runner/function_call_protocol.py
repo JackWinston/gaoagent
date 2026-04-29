@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from gaoagent.core.runner.Utils import summarize, truncate_text
+from gaoagent.core.runner.utils import summarize, truncate_text
 
 
 def build_function_specs(

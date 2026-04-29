@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 
-from gaoagent.core.runner.RunLogger import (
+from gaoagent.core.runner.run_logger import (
     RunLogger,
     _to_jsonable,
     _safe_json_dumps,

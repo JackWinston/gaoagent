@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from gaoagent.rag.RagChromaRetriever import RagChromaRetriever
+from gaoagent.rag.rag_chroma_retriever import RagChromaRetriever
+from gaoagent.core.handler_utils import tokenize_for_bm25, sanitize_collection_name
 
 
 class TestRrfFuse(unittest.TestCase):
@@ -50,48 +51,48 @@ class TestRrfFuse(unittest.TestCase):
 
 class TestTokenizeForBm25(unittest.TestCase):
     def test_english_words(self) -> None:
-        tokens = RagChromaRetriever._tokenize_for_bm25(None, "Hello World Test")
+        tokens = tokenize_for_bm25("Hello World Test")
         self.assertEqual(tokens, ["hello", "world", "test"])
 
     def test_chinese_chars(self) -> None:
-        tokens = RagChromaRetriever._tokenize_for_bm25(None, "你好世界")
+        tokens = tokenize_for_bm25("你好世界")
         self.assertEqual(tokens, ["你", "好", "世", "界"])
 
     def test_mixed(self) -> None:
-        tokens = RagChromaRetriever._tokenize_for_bm25(None, "hello你好world")
+        tokens = tokenize_for_bm25("hello你好world")
         self.assertEqual(tokens, ["hello", "你", "好", "world"])
 
     def test_empty(self) -> None:
-        tokens = RagChromaRetriever._tokenize_for_bm25(None, "")
+        tokens = tokenize_for_bm25("")
         self.assertEqual(tokens, [])
 
     def test_numbers(self) -> None:
-        tokens = RagChromaRetriever._tokenize_for_bm25(None, "test123 abc")
+        tokens = tokenize_for_bm25("test123 abc")
         self.assertEqual(tokens, ["test123", "abc"])
 
 
 class TestSanitizeCollectionName(unittest.TestCase):
     def test_normal_name(self) -> None:
-        result = RagChromaRetriever._sanitize_collection_name(None, "my_knowledge_base")
+        result = sanitize_collection_name("my_knowledge_base")
         self.assertEqual(result, "kb_my_knowledge_base")
 
     def test_special_chars(self) -> None:
-        result = RagChromaRetriever._sanitize_collection_name(None, "my-kb!@#name")
+        result = sanitize_collection_name("my-kb!@#name")
         self.assertTrue(result.startswith("kb_"))
         self.assertNotIn("!", result)
         self.assertNotIn("@", result)
 
     def test_empty_name(self) -> None:
-        result = RagChromaRetriever._sanitize_collection_name(None, "")
+        result = sanitize_collection_name("")
         self.assertEqual(result, "kb_default")
 
     def test_whitespace_only(self) -> None:
-        result = RagChromaRetriever._sanitize_collection_name(None, "   ")
+        result = sanitize_collection_name("   ")
         self.assertEqual(result, "kb_default")
 
     def test_long_name_truncated(self) -> None:
         long_name = "a" * 200
-        result = RagChromaRetriever._sanitize_collection_name(None, long_name)
+        result = sanitize_collection_name(long_name)
         self.assertLessEqual(len(result), 120 + 3)  # kb_ prefix
 
 

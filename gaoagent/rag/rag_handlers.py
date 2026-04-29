@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import click
-from gaoagent.core.runner.Console import Console
+from gaoagent.core.runner.console import Console
 import shutil
-import json
 from pathlib import Path
 
-from gaoagent.core.CoreConfigDefault import CoreConfigDefault
-from gaoagent.core.runner.Utils import try_project_root_dir
-from gaoagent.rag.RagStorePath import (
+from gaoagent.core.core_config_default import CoreConfigDefault
+from gaoagent.core.runner.utils import try_project_root_dir
+from gaoagent.core.handler_utils import copy_dir, rewrite_index_meta_store_dir
+from gaoagent.rag.rag_store_path import (
     resolve_chroma_store_dir,
-    resolve_index_meta_file,
     is_internal_rag_store_dir_name,
 )
 
@@ -85,14 +84,14 @@ class RagHandlers:
             if not should_overwrite:
                 Console.info(f"已跳过同步到全局目录：{dst_dir}")
                 return
-        self._copy_dir(src_dir, dst_dir)
+        copy_dir(src_dir, dst_dir)
         src_store_dir = resolve_chroma_store_dir(kb_dir=src_dir, kb_name=kb_name)
         dst_store_dir = resolve_chroma_store_dir(kb_dir=dst_dir, kb_name=kb_name)
         if not src_store_dir.exists() or not src_store_dir.is_dir():
             Console.info(f"同步失败：未找到 Chroma 存储目录：{src_store_dir}")
             return
-        self._copy_dir(src_store_dir, dst_store_dir)
-        self._rewrite_index_meta_store_dir(kb_dir=dst_dir, kb_name=kb_name)
+        copy_dir(src_store_dir, dst_store_dir)
+        rewrite_index_meta_store_dir(kb_dir=dst_dir, kb_name=kb_name)
         Console.info(f"已同步知识库到全局目录：{dst_dir}")
 
     def remove(self, name: str | None = None) -> None:
@@ -183,17 +182,17 @@ class RagHandlers:
         global_rag_dir.mkdir(parents=True, exist_ok=True)
         src_dir = project_rag_dir / target_name
         dst_dir = global_rag_dir / target_name
-        self._copy_dir(src_dir, dst_dir)
+        copy_dir(src_dir, dst_dir)
         src_store_dir = resolve_chroma_store_dir(kb_dir=src_dir, kb_name=target_name)
         dst_store_dir = resolve_chroma_store_dir(kb_dir=dst_dir, kb_name=target_name)
         if src_store_dir.exists() and src_store_dir.is_dir():
-            self._copy_dir(src_store_dir, dst_store_dir)
-        self._rewrite_index_meta_store_dir(kb_dir=dst_dir, kb_name=target_name)
+            copy_dir(src_store_dir, dst_store_dir)
+        rewrite_index_meta_store_dir(kb_dir=dst_dir, kb_name=target_name)
         Console.info(f"已同步更新后的知识库到全局目录：{dst_dir}")
 
     def search(self, kb_name: str, query: str, top_k: int = 3) -> None:
         """在指定知识库执行检索并输出结果摘要。"""
-        from gaoagent.rag.RagChromaRetriever import RagChromaRetriever
+        from gaoagent.rag.rag_chroma_retriever import RagChromaRetriever
         
         Console.info(f"正在知识库 '{kb_name}' 中检索: {query} (top_k={top_k})...")
         retriever = RagChromaRetriever(kb_name=kb_name)
@@ -235,27 +234,4 @@ class RagHandlers:
                 for p in rag_dir.iterdir()
                 if p.is_dir() and not is_internal_rag_store_dir_name(p.name)
             ]
-        )
-
-    def _copy_dir(self, src: Path, dst: Path) -> None:
-        """目录覆盖复制：目标存在时先删后拷。"""
-        if dst.exists():
-            shutil.rmtree(dst)
-        shutil.copytree(src, dst)
-
-    def _rewrite_index_meta_store_dir(self, *, kb_dir: Path, kb_name: str) -> None:
-        """修正 `index_meta.json` 的 `store_dir` 为当前目录实际路径。"""
-        meta_file = resolve_index_meta_file(kb_dir=kb_dir, kb_name=kb_name)
-        if not meta_file.exists() or not meta_file.is_file():
-            return
-        try:
-            data = json.loads(meta_file.read_text(encoding="utf-8"))
-        except Exception:
-            return
-        if not isinstance(data, dict):
-            return
-        data["store_dir"] = str(resolve_chroma_store_dir(kb_dir=kb_dir, kb_name=kb_name).resolve())
-        meta_file.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
-            encoding="utf-8",
         )

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from gaoagent.core.runner.HttpClient import OpenAICompatibleHttpClient
+from gaoagent.core.runner.http_client import OpenAICompatibleHttpClient
 
 
 class TestBuildChatCompletionsUrl(unittest.TestCase):
@@ -32,7 +32,7 @@ class TestBuildChatCompletionsUrl(unittest.TestCase):
 
 class TestHttpResponse(unittest.TestCase):
     def test_default_fields(self) -> None:
-        from gaoagent.core.runner.HttpClient import HttpResponse
+        from gaoagent.core.runner.http_client import HttpResponse
         resp = HttpResponse(ok=True)
         self.assertTrue(resp.ok)
         self.assertIsNone(resp.status)
@@ -41,7 +41,7 @@ class TestHttpResponse(unittest.TestCase):
         self.assertIsNone(resp.text)
 
     def test_with_fields(self) -> None:
-        from gaoagent.core.runner.HttpClient import HttpResponse
+        from gaoagent.core.runner.http_client import HttpResponse
         resp = HttpResponse(ok=False, status=500, reason="error", json={"msg": "fail"}, text="fail")
         self.assertFalse(resp.ok)
         self.assertEqual(resp.status, 500)

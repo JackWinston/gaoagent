@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from gaoagent.rag.RagChromaIndexer import RagChromaIndexerConfig
-from gaoagent.rag.RagStorePath import resolve_chroma_store_dir
+from gaoagent.rag.rag_chroma_indexer import RagChromaIndexerConfig
+from gaoagent.rag.rag_store_path import resolve_chroma_store_dir
 
 
 class RagApiConfigStore:

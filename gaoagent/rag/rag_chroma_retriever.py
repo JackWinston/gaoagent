@@ -11,14 +11,15 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from gaoagent.rag.RagApiConfig import RagApiConfigStore
-from gaoagent.rag.RagChromaIndexer import RagChromaIndexer, RagChromaIndexerConfig
-from gaoagent.rag.RagStorePath import (
+from gaoagent.rag.rag_api_config import RagApiConfigStore
+from gaoagent.rag.rag_chroma_indexer import RagChromaIndexer, RagChromaIndexerConfig
+from gaoagent.rag.rag_store_path import (
     resolve_chroma_store_dir,
     resolve_index_meta_file,
     resolve_bm25_index_db,
 )
-from gaoagent.core.runner.Utils import _find_config_file
+from gaoagent.core.runner.utils import _find_config_file
+from gaoagent.core.handler_utils import tokenize_for_bm25, sanitize_collection_name
 
 
 class RagChromaRetriever:
@@ -70,7 +71,7 @@ class RagChromaRetriever:
 
         try:
             meta = json.loads(self.meta_file.read_text(encoding="utf-8"))
-            collection_name = self._sanitize_collection_name(meta.get("kb_name", self.kb_name))
+            collection_name = sanitize_collection_name(meta.get("kb_name", self.kb_name))
             embedding_mode = meta.get("embedding_mode", "local")
             embedding_model = meta.get("embedding_model", "all-MiniLM-L6-v2")
             store_dir = self.store_dir
@@ -359,7 +360,7 @@ class RagChromaRetriever:
             if doc_count <= 0 or avgdl <= 0.0:
                 return []
 
-            query_tokens = self._tokenize_for_bm25(query)
+            query_tokens = tokenize_for_bm25(query)
             if not query_tokens:
                 return []
 
@@ -512,39 +513,6 @@ class RagChromaRetriever:
             item["retrieval_sources"] = sorted(sources) if isinstance(sources, set) else [str(sources)]
             final_items.append(item)
         return final_items
-
-    def _tokenize_for_bm25(self, text: str) -> list[str]:
-        """BM25 轻量分词。
-
-        规则:
-        - 英文/数字/下划线：按词切分；
-        - 中文连续片段：按单字展开。
-
-        设计意图:
-        - 在不引入额外中文分词依赖的前提下，提供可用的稀疏召回能力；
-        - 若后续需要更高中文检索精度，可替换为领域分词器实现。
-        """
-        normalized = str(text or "").lower()
-        tokens: list[str] = []
-        for seg in re.findall(r"[\u4e00-\u9fff]+|[a-z0-9_]+", normalized):
-            if re.fullmatch(r"[\u4e00-\u9fff]+", seg):
-                tokens.extend(list(seg))
-            else:
-                tokens.append(seg)
-        return tokens
-
-    def _sanitize_collection_name(self, kb_name: str) -> str:
-        """保持与 Indexer 一致的 sanitize 逻辑"""
-        raw = kb_name.strip()
-        base = re.sub(r"[^a-zA-Z0-9._-]+", "_", raw)
-        base = re.sub(r"_+", "_", base)
-        base = base.strip("._-")
-        if not base:
-            base = "default"
-        base = base[:120].strip("._-")
-        if not base:
-            base = "default"
-        return f"kb_{base}"
 
     def _embed_remote(self, text: str, base_url: str, api_key: str, model: str, timeout: int) -> list[float]:
         """保持与 Indexer 一致的远程请求逻辑，但只针对单条 query"""

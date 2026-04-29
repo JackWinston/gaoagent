@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from gaoagent.core.CoreConfigDefault import CoreConfigDefault
+from gaoagent.core.core_config_default import CoreConfigDefault
 
 
 class TestValidateMcpConfig(unittest.TestCase):
@@ -62,7 +62,7 @@ class TestReadJson(unittest.TestCase):
         result = CoreConfigDefault()._read_json(Path("/nonexistent/file.json"))
         self.assertIsNone(result)
 
-    @patch("gaoagent.core.CoreConfigDefault.Console")
+    @patch("gaoagent.core.core_config_default.Console")
     def test_invalid_json(self, mock_console) -> None:
         import tempfile
         mock_console.confirm.return_value = True

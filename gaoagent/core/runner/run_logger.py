@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from gaoagent.core.runner.Utils import project_config_dir
+from gaoagent.core.runner.utils import project_config_dir
 
 
 class RunLogger:

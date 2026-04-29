@@ -1,5 +1,5 @@
 import click
-from gaoagent.core.runner.Console import Console
+from gaoagent.core.runner.console import Console
 
 from gaoagent import __version__
 from gaoagent.router import dispatch
@@ -698,6 +698,7 @@ def agent_group() -> None:
     help="列出所有远程可以控制的智能体。示例：gaoagent agent list",
 )
 def agent_list_cmd() -> None:
+    """列出所有远程可以控制的智能体。"""
     dispatch("agent.list")
 
 @agent_group.command(
@@ -705,6 +706,7 @@ def agent_list_cmd() -> None:
     help="添加远程可以控制的智能体。示例：gaoagent agent add",
 )
 def agent_add_cmd() -> None:
+    """交互式添加一个远程 A2A 智能体。"""
     dispatch("agent.add")
 
 @agent_group.command(
@@ -713,6 +715,7 @@ def agent_add_cmd() -> None:
 )
 @click.argument("name", required=False)
 def agent_remove_cmd(name: str | None) -> None:
+    """移除指定的远程 A2A 智能体。"""
     dispatch("agent.remove", name=name)
 
 @agent_group.command(
@@ -721,6 +724,7 @@ def agent_remove_cmd(name: str | None) -> None:
 )
 @click.option("--port", type=int, default=8000, help="服务端口")
 def agent_serve_cmd(port: int) -> None:
+    """将当前 GaoAgent 暴露为 A2A 服务端。"""
     dispatch("agent.serve", port=port)
 
 def main() -> None:

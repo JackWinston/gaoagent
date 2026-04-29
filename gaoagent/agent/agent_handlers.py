@@ -1,4 +1,3 @@
-import json
 import asyncio
 from pathlib import Path
 from typing import Any, Optional
@@ -6,8 +5,8 @@ from typing import Any, Optional
 import click
 import uvicorn
 import httpx
-from gaoagent.core.runner.Console import Console
-from gaoagent.core.runner.Utils import global_config_dir, project_config_dir
+from gaoagent.core.runner.console import Console
+from gaoagent.core.handler_utils import read_json_file, write_json, resolve_scope_and_config_path
 
 try:
     from a2a.server.apps import A2AStarletteApplication
@@ -15,7 +14,7 @@ try:
     from a2a.server.tasks import InMemoryTaskStore, BaseTaskExecutor
     from a2a.types import AgentCard, AgentCapabilities, Skill, Task, Artifact, Part, Message
     from a2a.client import A2AClient
-    from gaoagent.agent.GaoTaskExecutor import GaoTaskExecutor
+    from gaoagent.agent.gao_task_executor import GaoTaskExecutor
     HAS_A2A = True
 except ImportError:
     HAS_A2A = False
@@ -27,26 +26,16 @@ class AgentHandlers:
         self.agent = agent
 
     def _resolve_scope_and_config_path(self) -> tuple[str, Path]:
-        project_config_root = project_config_dir()
-        if project_config_root is not None:
-            return ("项目", project_config_root / self._A2A_CONFIG_FILENAME)
-        return ("全局", global_config_dir() / self._A2A_CONFIG_FILENAME)
+        return resolve_scope_and_config_path(self._A2A_CONFIG_FILENAME)
 
     def _load_agents(self, file_path: Path) -> dict[str, Any]:
-        if not file_path.exists() or not file_path.is_file():
+        payload = read_json_file(file_path)
+        if not isinstance(payload, dict):
             return {}
-        try:
-            payload = json.loads(file_path.read_text(encoding="utf-8"))
-            return payload.get("agents", {})
-        except Exception:
-            return {}
+        return payload.get("agents", {})
 
     def _write_agents(self, file_path: Path, agents: dict[str, Any]) -> None:
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"agents": agents}
-        tmp_file = file_path.with_name(f"{file_path.name}.tmp")
-        tmp_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp_file.replace(file_path)
+        write_json(file_path, {"agents": agents})
 
     def list_agents(self) -> None:
         """列出所有远程可以控制的智能体"""

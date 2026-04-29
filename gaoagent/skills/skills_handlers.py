@@ -5,13 +5,14 @@ from pathlib import Path
 from typing import Any
 
 import click
-from gaoagent.core.runner.Console import Console
+from gaoagent.core.runner.console import Console
 
-from gaoagent.core.runner.Utils import (
+from gaoagent.core.runner.utils import (
     global_config_dir,
     scan_skills_metadata,
     try_project_root_dir,
 )
+from gaoagent.core.handler_utils import copy_dir, prompt_multi_select
 
 
 class SkillsHandlers:
@@ -87,7 +88,7 @@ class SkillsHandlers:
         if name and name in names:
             selected_names = [name]
         else:
-            selected_names = self._prompt_multi_select("请选择要安装的 Skill（输入序号或名称，逗号分隔；回车跳过；输入 all 选择全部）", names)
+            selected_names = prompt_multi_select("请选择要安装的 Skill（输入序号或名称，逗号分隔；回车跳过；输入 all 选择全部）", names)
         
         if not selected_names:
             return
@@ -103,7 +104,7 @@ class SkillsHandlers:
             if dst.exists():
                 Console.info(f"Skill '{skill_name}' 已存在，跳过。")
                 continue
-            self._copy_dir(src, dst)
+            copy_dir(src, dst)
             installed_count += 1
             installed_names.append(skill_name)
             
@@ -182,57 +183,3 @@ class SkillsHandlers:
             show_default=True,
         )
         return choice
-
-    def _prompt_multi_select(self, prompt: str, options: list[str]) -> list[str]:
-        """通用多选输入解析器（支持序号/名称/all/回车跳过）。"""
-        if not options:
-            return []
-
-        while True:
-            raw = Console.prompt(prompt, type=str, default="", show_default=False).strip()
-            if raw == "":
-                return []
-
-            lowered = raw.lower()
-            if lowered in ("all", "*"):
-                return options
-
-            parts = [p.strip() for p in raw.split(",") if p.strip()]
-            selected: list[str] = []
-            ok = True
-            for part in parts:
-                if part.isdigit():
-                    idx = int(part)
-                    if idx < 1 or idx > len(options):
-                        ok = False
-                        break
-                    selected.append(options[idx - 1])
-                    continue
-
-                match = None
-                for opt in options:
-                    if opt.lower() == part.lower():
-                        match = opt
-                        break
-                if match is None:
-                    ok = False
-                    break
-                selected.append(match)
-
-            if ok:
-                deduped: list[str] = []
-                seen: set[str] = set()
-                for item in selected:
-                    if item in seen:
-                        continue
-                    seen.add(item)
-                    deduped.append(item)
-                return deduped
-
-            Console.info("输入不合法，请重新输入")
-
-    def _copy_dir(self, src: Path, dst: Path) -> None:
-        """目录覆盖复制：若目标已存在则先删除后复制。"""
-        if dst.exists():
-            shutil.rmtree(dst)
-        shutil.copytree(src, dst)

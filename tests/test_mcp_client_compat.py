@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from gaoagent.mcp.MCPClientCompat import (
+from gaoagent.mcp.mcp_client_compat import (
     MCPServerConfig,
     _extract_tools,
     _serialize_call_result,

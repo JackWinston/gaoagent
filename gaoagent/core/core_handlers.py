@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from gaoagent.core.runner.Console import Console
-from gaoagent.core.ChatRunner import ChatRunner
-from gaoagent.core.CoreConfigDefault import CoreConfigDefault
-from gaoagent.core.CoreInit import CoreInit
-from gaoagent.core.TaskRunner import TaskRunner
+from gaoagent.core.runner.console import Console
+from gaoagent.core.chat_runner import ChatRunner
+from gaoagent.core.core_config_default import CoreConfigDefault
+from gaoagent.core.core_init import CoreInit
+from gaoagent.core.task_runner import TaskRunner
 
 
 class CoreHandlers:
@@ -110,7 +110,7 @@ class CoreHandlers:
             images=images,
         )
 
-    def task(self,question:str,mode:str,id:str|None=None,images:str|None=None) -> None:
+    def task(self, question: str, mode: str, id: str | None = None, images: str | None = None) -> None:
         """任务执行入口：将问题交给 TaskRunner 执行并输出结果。
 
         作用:

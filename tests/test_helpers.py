@@ -4,12 +4,12 @@ import hashlib
 import unittest
 from pathlib import Path
 
-from gaoagent.core.ChatRunner import _extract_content, _trim_messages
-from gaoagent.core.runner.FunctionCallProtocol import (
+from gaoagent.core.chat_runner import _extract_content, _trim_messages
+from gaoagent.core.runner.function_call_protocol import (
     parse_tool_arguments,
 )
-from gaoagent.mcp.MCPClientCompat import _sanitize_token, export_tool_name
-from gaoagent.rag.RagStorePath import (
+from gaoagent.mcp.mcp_client_compat import _sanitize_token, export_tool_name
+from gaoagent.rag.rag_store_path import (
     is_internal_rag_store_dir_name,
     resolve_bm25_index_db,
     resolve_chroma_store_dir,

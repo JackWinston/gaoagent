@@ -3,8 +3,8 @@ from __future__ import annotations
 import time
 import os
 import platform
-from gaoagent.core.runner.BaseRunner import Mode
-from gaoagent.core.runner.Utils import load_skills, try_project_root_dir
+from gaoagent.core.runner.base_runner import Mode
+from gaoagent.core.runner.utils import load_skills, try_project_root_dir
 
 
 def build_system_prompt(tool_names: list[str], mode: Mode) -> str:
@@ -84,12 +84,12 @@ def build_react_system_text(*, tool_names: list[str] | None) -> str:
     """
     available_tools = tool_names or []
 
-    from gaoagent.core.runner.Utils import load_rag
+    from gaoagent.core.runner.utils import load_rag
 
     rag_info = load_rag()
     rag_section : str = ""
     if rag_info is None:
-        rag_section =  ""
+        rag_section = ""
     else :
         kb_list = rag_info.get("indexes", [])
         kb_str = ", ".join(kb_list)
@@ -104,7 +104,7 @@ def build_react_system_text(*, tool_names: list[str] | None) -> str:
         else ""
     )
 
-    a2a_str = _getA2AStr()
+    a2a_str = _get_a2a_str()
     a2a_section : str = ""
     if a2a_str is None:
         a2a_section = ""
@@ -119,7 +119,7 @@ def build_react_system_text(*, tool_names: list[str] | None) -> str:
         else ""
     )
 
-    skill_str = _getSkillStr()
+    skill_str = _get_skill_str()
     skill_section : str = ""
     if skill_str is None:
         skill_section = ""
@@ -194,8 +194,8 @@ Python Version : {platform.python_version()}
     return base_prompt
 
 
-def _getSkillStr() -> str | None:
-    """_getSkillStr 函数。
+def _get_skill_str() -> str | None:
+    """_get_skill_str 函数。
 
     用途:
     - 构建 Skill 索引字符串，用于在系统提示词中引用。
@@ -229,11 +229,11 @@ def _getSkillStr() -> str | None:
 
     return "".join(result)
 
-def _getA2AStr() -> str | None:
+def _get_a2a_str() -> str | None:
     """
     构建 A2A 远程 Agent 列表字符串，用于在系统提示词中引用。
     """
-    from gaoagent.core.runner.Utils import load_a2a_agents
+    from gaoagent.core.runner.utils import load_a2a_agents
     agents = load_a2a_agents()
     if not agents:
         return None

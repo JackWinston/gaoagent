@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from gaoagent.api.ApiHandlers import ApiHandlers
+from gaoagent.api.api_handlers import ApiHandlers
 
 
 class TestPickFirstModel(unittest.TestCase):

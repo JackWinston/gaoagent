@@ -6,12 +6,12 @@ from pathlib import Path
 from typing import Any
 
 import click
-from gaoagent.core.runner.Console import Console
+from gaoagent.core.runner.console import Console
 
-from gaoagent.core.CoreConfigDefault import CoreConfigDefault
-from gaoagent.mcp.MCPClientCompat import MCPStdioClientSync
-from gaoagent.core.runner.Utils import (
-    try_project_root_dir,
+from gaoagent.core.core_config_default import CoreConfigDefault
+from gaoagent.core.handler_utils import read_json_file, write_json, resolve_scope_and_config_path
+from gaoagent.mcp.mcp_client_compat import MCPStdioClientSync
+from gaoagent.core.runner.utils import (
     global_config_dir,
     project_config_dir,
 )
@@ -193,24 +193,12 @@ class MCPHandlers:
         Console.info(f"已更新 {scope} MCP：{target}, disabled={str(disabled).lower()}")
 
     def _resolve_scope_and_config_path(self) -> tuple[str, Path]:
-        """解析当前操作作用域并返回对应配置文件路径。
-
-        返回:
-        - `(scope, path)`，其中 `scope` 为“项目”或“全局”。
-        """
-        project_config_root = project_config_dir()
-        if project_config_root is not None:
-            return ("项目", project_config_root / self._MCP_CONFIG_FILENAME)
-        return ("全局", global_config_dir() / self._MCP_CONFIG_FILENAME)
+        """解析当前操作作用域并返回对应配置文件路径。"""
+        return resolve_scope_and_config_path(self._MCP_CONFIG_FILENAME)
 
     def _read_json_file(self, file_path: Path) -> Any | None:
         """读取 JSON 文件；不存在或解析失败时返回 `None`。"""
-        if not file_path.exists() or not file_path.is_file():
-            return None
-        try:
-            return json.loads(file_path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
+        return read_json_file(file_path)
 
     def _load_mcp_servers(self, file_path: Path) -> dict[str, Any]:
         """从配置文件读取 `mcpServers` 映射。"""
@@ -222,14 +210,7 @@ class MCPHandlers:
 
     def _write_mcp_servers(self, file_path: Path, servers: dict[str, Any]) -> None:
         """原子写入 `mcpServers` 配置，避免部分写入。"""
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"mcpServers": servers}
-        tmp_file = file_path.with_name(f"{file_path.name}.tmp")
-        tmp_file.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        tmp_file.replace(file_path)
+        write_json(file_path, {"mcpServers": servers})
 
     def _upsert_mcp_server(
         self, file_path: Path, name: str, body: dict[str, Any]

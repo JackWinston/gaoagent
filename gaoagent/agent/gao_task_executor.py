@@ -1,8 +1,8 @@
 import asyncio
 from a2a.server.tasks import BaseTaskExecutor
 from a2a.types import Task, Artifact, Part
-from gaoagent.core.runner.Console import Console
-from gaoagent.core.TaskRunner import TaskRunner
+from gaoagent.core.runner.console import Console
+from gaoagent.core.task_runner import TaskRunner
 import traceback
 
 class GaoTaskExecutor(BaseTaskExecutor):
@@ -43,10 +43,10 @@ class GaoTaskExecutor(BaseTaskExecutor):
         try:
             # 这里的 TaskRunner().run() 默认直接打到控制台，需要通过封装获取返回值。
             # 为了适配现有架构，我们可以直接实例化 ReActRunner 获取结果
-            from gaoagent.core.runner.ReActRunner import ReActRunner
-            from gaoagent.core.runner.RunLogger import create_run_logger, set_current_run_logger, reset_current_run_logger
-            from gaoagent.core.runner.Tooling import default_tool_registry
-            from gaoagent.core.runner.BaseRunner import RunnerConfig
+            from gaoagent.core.runner.react_runner import ReActRunner
+            from gaoagent.core.runner.run_logger import create_run_logger, set_current_run_logger, reset_current_run_logger
+            from gaoagent.core.runner.tooling import default_tool_registry
+            from gaoagent.core.runner.base_runner import RunnerConfig
             
             def _run_sync_task():
                 run_logger = create_run_logger()

@@ -8,9 +8,9 @@ import subprocess
 from typing import Any, Callable
 
 import click
-from gaoagent.core.runner.Console import Console
+from gaoagent.core.runner.console import Console
 
-from gaoagent.core.runner.Utils import safe_json_dumps, try_project_root_dir, is_image_file, image_to_base64_url, build_multimodal_content
+from gaoagent.core.runner.utils import safe_json_dumps, try_project_root_dir, is_image_file, image_to_base64_url, build_multimodal_content
 
 _TOOL_SPEC_ATTR = "_tool_spec"
 
@@ -710,7 +710,7 @@ def default_tool_registry() -> ToolRegistry:
             return {"success": False, "error": "query 不能为空"}
             
         try:
-            from gaoagent.rag.RagChromaRetriever import RagChromaRetriever
+            from gaoagent.rag.rag_chroma_retriever import RagChromaRetriever
             retriever = RagChromaRetriever(kb_name=kb_name)
             return retriever.search(query=query, top_k=int(top_k))
         except Exception as e:
@@ -751,7 +751,7 @@ def default_tool_registry() -> ToolRegistry:
             return {"success": False, "error": "query 不能为空"}
 
         try:
-            from gaoagent.core.runner.Utils import load_a2a_agents
+            from gaoagent.core.runner.utils import load_a2a_agents
             import httpx
             import asyncio
             from a2a.client import A2AClient

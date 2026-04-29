@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from gaoagent.core.runner.Utils import (
+from gaoagent.core.runner.utils import (
     now_ms,
     truncate_text,
     safe_json_dumps,

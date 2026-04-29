@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from gaoagent.core.CoreHandlers import CoreHandlers
-from gaoagent.rag.RagHandlers import RagHandlers
-from gaoagent.skills.SkillsHandlers import SkillsHandlers
-from gaoagent.mcp.MCPHandlers import MCPHandlers
-from gaoagent.api.ApiHandlers import ApiHandlers
-from gaoagent.agent.AgentHandlers import AgentHandlers
+from gaoagent.core.core_handlers import CoreHandlers
+from gaoagent.rag.rag_handlers import RagHandlers
+from gaoagent.skills.skills_handlers import SkillsHandlers
+from gaoagent.mcp.mcp_handlers import MCPHandlers
+from gaoagent.api.api_handlers import ApiHandlers
+from gaoagent.agent.agent_handlers import AgentHandlers
 
 @dataclass(frozen=True)
 class Route:

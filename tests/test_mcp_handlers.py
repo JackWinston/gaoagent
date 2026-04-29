@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from gaoagent.mcp.MCPHandlers import MCPHandlers
+from gaoagent.mcp.mcp_handlers import MCPHandlers
 
 
 class TestMCPStatusOf(unittest.TestCase):

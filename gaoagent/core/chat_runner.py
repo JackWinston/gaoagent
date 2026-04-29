@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from gaoagent.core.runner.Console import Console
-from gaoagent.core.runner.Utils import build_multimodal_content, is_image_file
+from gaoagent.core.runner.console import Console
+from gaoagent.core.runner.utils import build_multimodal_content, is_image_file
 
 
 def _trim_messages(messages: list[dict[str, Any]], context_size: int | None) -> list[dict[str, Any]]:
@@ -117,8 +117,8 @@ class ChatRunner:
         返回:
         - `None`。结果通过终端输出反馈给用户。
         """
-        from gaoagent.core.runner.HttpClient import OpenAICompatibleHttpClient
-        from gaoagent.core.runner.Utils import load_history, load_request_base_info
+        from gaoagent.core.runner.http_client import OpenAICompatibleHttpClient
+        from gaoagent.core.runner.utils import load_history, load_request_base_info
 
         base_info = load_request_base_info(api_name=api, model_name=model)
         if not base_info:
@@ -166,7 +166,7 @@ class ChatRunner:
         - context_size: 上下文消息窗口大小。
         - images: 图片路径列表（逗号分隔），用于多模态输入。
         """
-        from gaoagent.core.runner.Utils import save_history
+        from gaoagent.core.runner.utils import save_history
 
         text = prompt.strip()
         if not text:
@@ -219,7 +219,7 @@ class ChatRunner:
         - context_size: 上下文消息窗口大小。
         - images: 图片路径列表（逗号分隔），用于多模态输入。
         """
-        from gaoagent.core.runner.Utils import save_history
+        from gaoagent.core.runner.utils import save_history
 
         Console.info("进入聊天模式（输入 exit 退出）")
 

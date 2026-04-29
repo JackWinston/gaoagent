@@ -7,7 +7,7 @@ from pathlib import Path
 
 try:
     import uvicorn
-    from gaoagent.agent.AgentHandlers import AgentHandlers
+    from gaoagent.agent.agent_handlers import AgentHandlers
     HAS_UVICORN = True
 except ImportError:
     HAS_UVICORN = False

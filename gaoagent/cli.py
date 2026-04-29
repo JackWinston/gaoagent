@@ -12,7 +12,7 @@ from gaoagent.router import dispatch
         "GaoAgent 命令行入口。\n"
         "支持两种模式：\n"
         "1) 子命令模式：gaoagent <command>\n"
-        "2) 快捷任务：gaoagent --task \"任务描述\" --mode react|plan|retry\n"
+        "2) 快捷任务：gaoagent --task \"任务描述\" --mode <模式组合>\n"
         "示例：\n"
         "  gaoagent init\n"
         "  gaoagent task \"帮我写一个发布脚本\"\n"
@@ -31,12 +31,12 @@ from gaoagent.router import dispatch
 )
 @click.option(
     "--mode",
-    type=click.Choice(["plan", "react", "retry"], case_sensitive=False),
+    type=str,
     default="react",
     show_default=True,
     help=(
-        "运行模式（配合 --task 使用）：plan=先规划，react=边想边做，retry=重试。\n"
-        "示例：gaoagent --task \"重构登录模块\" --mode plan"
+        "运行模式（配合 --task 使用）：支持单模式(plan/react/retry)或组合模式(如 retry,plan)。\n"
+        "示例：gaoagent --task \"重构登录模块\" --mode retry,plan"
     ),
 )
 @click.option(
@@ -51,7 +51,7 @@ def cli(ctx: click.Context, task_question: str | None, mode: str, id: str | None
 
     用法：
     - gaoagent [子命令] [参数]
-    - gaoagent --task "任务描述" [--mode react|plan|retry] [--id session_id]
+    - gaoagent --task "任务描述" [--mode <模式组合>] [--id session_id]
 
     说明：
     - 支持 `--task` 快捷模式：无需显式输入 `task` 子命令即可直接执行任务。
@@ -60,7 +60,7 @@ def cli(ctx: click.Context, task_question: str | None, mode: str, id: str | None
     参数：
     - ctx: Click 上下文对象（用于命令分发上下文，不直接参与业务逻辑）。
     - task_question: 任务文本；非空时直接触发 `dispatch("task", ...)`。
-    - mode: 任务运行模式，可选 `react/plan/retry`。
+    - mode: 任务运行模式，支持单模式(plan/react/retry)或组合模式(如 retry,plan)。
     - id: 会话ID，用于历史记录。
     """
     q = (task_question or "").strip()
@@ -189,12 +189,12 @@ def chat_cmd(
 @click.argument("question", required=False)
 @click.option(
     "--mode",
-    type=click.Choice(["plan", "react", "retry"], case_sensitive=False),
+    type=str,
     default="react",
     show_default=True,
     help=(
-        "任务执行模式：plan=先规划，react=边想边做，retry=重试。\n"
-        "示例：gaoagent task --mode plan \"设计数据库表结构\""
+        "任务执行模式：支持单模式(plan/react/retry)或组合模式(如 retry,plan)。\n"
+        "示例：gaoagent task --mode retry,plan \"解决复杂的部署报错\""
     ),
 )
 @click.option(
@@ -207,7 +207,7 @@ def task_cmd(question: str | None, mode: str, id: str | None = None) -> None:
     创建并运行一个任务。
 
     - question: 任务描述（可省略，省略时会进入交互式输入）
-    - mode: 执行模式（plan/react/retry）目前只实现了 react 模式。
+    - mode: 任务执行模式，支持单模式(plan/react/retry)或组合模式(如 retry,plan)。
     - id: 会话ID，用于历史记录。
 
     用法：

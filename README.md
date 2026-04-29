@@ -65,7 +65,7 @@ gaoagent --help
 GaoAgent 提供两种入口：
 
 1. 子命令模式：`gaoagent <command> [options]`
-2. 快捷任务模式：`gaoagent --task "任务描述" --mode react|plan|retry`
+2. 快捷任务模式：`gaoagent --task "任务描述" --mode <模式组合>`
 
 ### 快速开始
 
@@ -97,7 +97,7 @@ gaoagent --task "分析这个仓库结构" --mode react
 
 - `gaoagent --version`：显示版本
 - `gaoagent -h` / `gaoagent --help`：显示帮助
-- `gaoagent --task <文本> --mode <plan|react|retry>`：快捷执行任务
+- `gaoagent --task <文本> --mode <模式组合>`：快捷执行任务，支持 `react`, `plan`, `retry` 或用逗号/空格分隔的组合（如 `retry,plan`）。
 
 示例：
 
@@ -105,7 +105,7 @@ gaoagent --task "分析这个仓库结构" --mode react
 gaoagent --task "实现文件上传接口" --mode react
 ```
 
-注意：`task` 命令注释标明当前主要实现为 `react` 模式，`plan/retry` 为预留模式。
+注意：`task` 命令支持组合模式（如 `retry,plan`），使用逗号或空格分隔最多 2 个参数。
 
 ### 4.2 核心命令
 
@@ -164,12 +164,16 @@ gaoagent chat --api openai --model gpt-4.1
 gaoagent chat --context-size 20
 ```
 
-#### `gaoagent task [question] --mode <plan|react|retry> [--id <session_id>]`
+#### `gaoagent task [question] --mode <模式组合> [--id <session_id>]`
 
 创建并运行任务。
 
 - `question` 可省略，省略时进入交互输入
-- `--mode` 默认 `react`
+- `--mode` 默认 `react`。支持使用逗号或空格组合 1~2 个模式参数，如 `retry,plan`：
+  - `react`：ReAct 基础模式
+  - `plan`：任务拆解规划模式（内部使用 ReAct 逐步执行）
+  - `retry`：自我反思与重试模式（默认包装 ReAct）
+  - `retry,plan` 或 `retry react` 等组合：使用 ReflectionRunner 包装内部的目标模式
 - `--id` 传入时，可以导入或保存以该 id 命名的历史对话记录（`.gaoagent/history/<session_id>.json`）
 
 示例：
@@ -177,6 +181,7 @@ gaoagent chat --context-size 20
 ```bash
 gaoagent task "生成接口文档"
 gaoagent task --mode react "帮我重构这个模块"
+gaoagent task --mode "retry,plan" "解决复杂的部署报错"
 gaoagent task --id session_1 "继续刚才的工作"
 gaoagent task
 ```

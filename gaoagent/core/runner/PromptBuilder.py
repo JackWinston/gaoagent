@@ -49,6 +49,27 @@ Python Version : {platform.python_version()}
 """
     return base_prompt
 
+def build_reflection_evaluation_prompt(original_question: str, result_text: str) -> str:
+    """
+    构建 Reflection 模式下评估任务是否彻底完成的系统提示词。
+    """
+    prompt = (
+        "你是一个严格的任务结果评估器（Reflection Evaluator）。\n"
+        f"【原始任务目标】\n{original_question}\n\n"
+        f"【任务执行结果】\n{result_text}\n\n"
+        "请严格评估该执行结果是否彻底完成了原始任务目标。\n"
+        "1. 仔细检查是否满足了目标中的所有约束和要求。\n"
+        "2. 如果发现遗漏、错误或执行失败，请指出具体问题并给出改进建议。\n"
+        "3. 如果任务目标已经完美达成，请确认。\n"
+        "请严格输出 JSON 格式，不要包含 Markdown 标记或其他多余文本。\n"
+        "JSON 格式要求如下：\n"
+        "{\n"
+        '  "is_finished": true/false, // 目标是否已彻底、正确地完成\n'
+        '  "feedback": "如果完成，给出简短的总结确认；如果未完成，给出详细的具体问题和下一步改进建议"\n'
+        "}\n"
+    )
+    return prompt
+
 def build_react_system_text(*, tool_names: list[str] | None) -> str:
     """build_react_system_text 函数。
 

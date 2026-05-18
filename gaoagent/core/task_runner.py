@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from gaoagent.core.runner.console import Console
 
@@ -97,7 +98,10 @@ class TaskRunner:
                 if m == "plan":
                     runner = PlanAndExecuteRunner(config=self._cfg, tools=self._tools)
                 elif m == "retry":
-                    target = ReActRunner(config=self._cfg, tools=self._tools)
+                    target = ReActRunner(
+                        config=replace(self._cfg, scene="reflection_inner_react"),
+                        tools=self._tools,
+                    )
                     runner = ReflectionRunner(target_runner=target, config=self._cfg)
                 else:
                     runner = ReActRunner(config=self._cfg, tools=self._tools)
@@ -110,9 +114,15 @@ class TaskRunner:
                 other_mode = modes[0] if modes[1] == "retry" else modes[1]
                 
                 if other_mode == "plan":
-                    target = PlanAndExecuteRunner(config=self._cfg, tools=self._tools)
+                    target = PlanAndExecuteRunner(
+                        config=replace(self._cfg, scene="reflection_inner_plan"),
+                        tools=self._tools,
+                    )
                 elif other_mode == "react":
-                    target = ReActRunner(config=self._cfg, tools=self._tools)
+                    target = ReActRunner(
+                        config=replace(self._cfg, scene="reflection_inner_react"),
+                        tools=self._tools,
+                    )
                 else:
                     Console.fatal("  参数错误：不能同时使用两个 `retry` 模式")
                     return

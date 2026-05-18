@@ -46,11 +46,21 @@ class RunnerConfig:
     param max_steps: 最多允许多少步决策. 超过这个步数后, Runner 就会停止并返回失败.
     param tools: 可用的工具列表. Runner 会根据需要调用这些工具来辅助决策和完成任务.
     param llm_invalid_retry: 当 LLM 返回空/不符合协议的响应时, 允许额外重试次数.
+    param scene: 当前运行场景标识。默认 `default`；`init_project_overview` 表示生成项目概览的初始化场景。
+    param disable_function_call: 是否禁用 function calling 及工具可见性.
+    param disable_mcp: 是否禁用 MCP 工具发现与可用性检查. 适用于只需要纯 LLM 推理的场景.
+    param disable_skill: 是否禁用 Skill 索引注入.
+    param disable_rag: 是否禁用 RAG 提示注入与 `rag_search` 工具可见性.
     """
 
     max_steps: int = 32
     tools: ToolRegistry | None = None
     llm_invalid_retry: int = 2
+    scene: str = "default"
+    disable_function_call: bool = False
+    disable_mcp: bool = False
+    disable_skill: bool = False
+    disable_rag: bool = False
 
 
 @dataclass

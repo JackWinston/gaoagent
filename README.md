@@ -25,6 +25,7 @@
 - 支持 Skills 安装/卸载与作用域管理（项目/全局）
 - 支持 RAG 知识库创建、更新、删除、语义检索
 - 支持多 API 配置与默认模型切换
+- 支持手动刷新项目概览文档 `project.md`，并在任务执行中按规则自动刷新
 
 ## 1. 需要安装的依赖
 
@@ -79,13 +80,16 @@ gaoagent config
 # 3) 初始化当前项目
 gaoagent init
 
-# 4) 新增 API 配置
+# 4) 手动刷新当前项目概览
+gaoagent refresh
+
+# 5) 新增 API 配置
 gaoagent api add
 
-# 5) 执行任务
+# 6) 执行任务
 gaoagent task "帮我写一个发布脚本"
 
-# 6) 快捷任务调用（无需显式 task 子命令）
+# 7) 快捷任务调用（无需显式 task 子命令）
 gaoagent --task "分析这个仓库结构" --mode react
 ```
 
@@ -125,6 +129,20 @@ gaoagent init
 ```bash
 gaoagent config
 ```
+
+#### `gaoagent refresh`
+
+强制重新生成当前项目的 `.gaoagent/project.md`。
+
+```bash
+gaoagent refresh
+```
+
+行为说明：
+
+- 会在当前项目根目录下重建 `.gaoagent/project.md`
+- 适合在大规模重构、批量文件变更、手动编辑后重新同步项目概览
+- 日常任务执行过程中，如果本轮出现“新增/删除文件且影响超过 2KB”的变更，也会在任务收尾阶段自动触发概览刷新
 
 #### `gaoagent chat`
 

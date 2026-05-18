@@ -118,6 +118,26 @@ def config_cmd() -> None:
 
 
 @cli.command(
+    "refresh",
+    help=(
+        "重新生成当前项目的 project.md 概览文件。\n"
+        "示例：gaoagent refresh"
+    ),
+)
+def refresh_cmd() -> None:
+    """
+    重新生成当前项目的 `.gaoagent/project.md`。
+
+    用法：
+    - gaoagent refresh
+
+    行为：
+    - 触发 `dispatch("refresh")`，强制重建当前项目概览文件。
+    """
+    dispatch("refresh")
+
+
+@cli.command(
     "chat",
     help=(
         "与 LLM 进行多轮对话，支持持续交互和上下文记忆。\n"

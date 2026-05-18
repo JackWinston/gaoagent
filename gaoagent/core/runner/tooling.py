@@ -567,6 +567,7 @@ def _write_file(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
                 "cwd": str(cwd),
             }
 
+        file_created = not p.exists()
         if mkdirs:
             p.parent.mkdir(parents=True, exist_ok=True)
         text = content if isinstance(content, str) else str(content)
@@ -579,6 +580,87 @@ def _write_file(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
             "encoding": encoding,
             "written_chars": n,
             "append": append,
+            "file_created": file_created,
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": {"type": type(e).__name__, "message": str(e)},
+            "path": str(path),
+        }
+
+
+@tool_spec(
+    description="删除单个本地文件。",
+    params_schema={
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+        },
+        "required": ["path"],
+        "additionalProperties": False,
+    },
+)
+def _delete_file(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """删除单个本地文件。
+
+    参数:
+    - path: 文件路径（必填）
+
+    返回:
+    - success=True 时: {"success": True, "path": "...", "deleted_bytes": n}
+    - success=False 时: {"success": False, "error": {"type": "...", "message": "..."}}
+    """
+    path = args.get("path")
+    if not isinstance(path, str) or not path.strip():
+        return {
+            "success": False,
+            "error": {
+                "type": "ValueError",
+                "message": "path must be non-empty str",
+            },
+        }
+    try:
+        cwd = Path.cwd().resolve()
+        p = Path(path).expanduser()
+        if not p.is_absolute():
+            p = (cwd / p).resolve()
+        else:
+            p = p.resolve()
+
+        if p != cwd and cwd not in p.parents:
+            return {
+                "success": False,
+                "error": {
+                    "type": "PermissionError",
+                    "message": "path must be current directory or its subdirectory",
+                },
+                "path": str(p),
+                "cwd": str(cwd),
+            }
+
+        if not p.exists():
+            return {
+                "success": False,
+                "error": {"type": "FileNotFoundError", "message": "path not found"},
+                "path": str(p),
+            }
+        if not p.is_file():
+            return {
+                "success": False,
+                "error": {
+                    "type": "IsADirectoryError",
+                    "message": "path is not a file",
+                },
+                "path": str(p),
+            }
+
+        deleted_bytes = int(p.stat().st_size)
+        p.unlink()
+        return {
+            "success": True,
+            "path": str(p),
+            "deleted_bytes": deleted_bytes,
         }
     except Exception as e:
         return {
@@ -1157,6 +1239,7 @@ def default_tool_registry() -> ToolRegistry:
     - read_file: 读取文件内容
     - ask_user: 向用户提问（支持多模态图片输入）
     - write_file: 写入文件内容
+    - delete_file: 删除单个文件
     - run_command: 执行 shell 命令
     - search_workspace: 全文检索（基于 ripgrep）
     - rag_search: RAG 知识库向量检索
@@ -1172,6 +1255,7 @@ def default_tool_registry() -> ToolRegistry:
     tools.register("read_file", _read_file)
     tools.register("ask_user", _ask_user)
     tools.register("write_file", _write_file)
+    tools.register("delete_file", _delete_file)
     tools.register("run_command", _run_command)
     tools.register("search_workspace", _search_workspace)
     tools.register("rag_search", _rag_search)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 
 from gaoagent.core.runner.base_runner import BaseRunner, RunResult, RunnerConfig, StepResult, RunnerContext
@@ -30,6 +31,37 @@ class PlanAndExecuteRunner(BaseRunner):
         cfg = config or RunnerConfig()
         super().__init__(mode="plan", runner_config=cfg)
         self._tools = tools
+        self._project_overview_refresh_records: list[dict[str, Any]] = []
+
+    def get_project_overview_refresh_records(self) -> list[dict[str, Any]]:
+        """返回计划执行过程中聚合的项目概览刷新触发记录。"""
+        from gaoagent.core.project_overview_tool import ProjectOverviewTool
+
+        return ProjectOverviewTool.clone_refresh_records(self._project_overview_refresh_records)
+
+    def _merge_child_project_overview_refresh_records(self, runner: Any) -> None:
+        """合并子执行器记录到的项目概览刷新触发记录。"""
+        from gaoagent.core.project_overview_tool import ProjectOverviewTool
+
+        self._project_overview_refresh_records = ProjectOverviewTool.merge_refresh_records_from_runner(
+            self._project_overview_refresh_records,
+            runner,
+        )
+
+    def _refresh_project_overview_after_plan(self) -> None:
+        """普通 plan 场景在整体完成后刷新一次 `project.md`。"""
+        if str(getattr(self.runner_config, "scene", "default") or "default") != "default":
+            return
+        try:
+            from gaoagent.core.project_overview_tool import ProjectOverviewTool
+
+            if not ProjectOverviewTool.should_refresh_from_records(self._project_overview_refresh_records):
+                return
+            ProjectOverviewTool().refresh_current_project_overview_if_exists(
+                refresh_records=self.get_project_overview_refresh_records()
+            )
+        except Exception as exc:
+            Console.warn(f"项目概览刷新失败：{exc}")
 
     def decide(self, ctx: RunnerContext) -> StepResult:
         """
@@ -100,9 +132,13 @@ class PlanAndExecuteRunner(BaseRunner):
             task_prompt += "请完成【当前子任务】的要求。你可以自由调用工具来获取信息或执行操作。"
 
             # 内部使用 ReActRunner 完成子节点
-            react_runner = ReActRunner(config=self.runner_config, tools=self._tools)
+            react_runner = ReActRunner(
+                config=replace(self.runner_config, scene="plan_subtask"),
+                tools=self._tools,
+            )
             # 子任务不使用全局 session id 避免互相干扰，只在内存中传递状态
             react_result = react_runner.run(task_prompt, id=None, images=images) 
+            self._merge_child_project_overview_refresh_records(react_runner)
 
             task_result_text = react_result.final_result if react_result.success else f"执行失败: {react_result.error}"
             
@@ -124,6 +160,7 @@ class PlanAndExecuteRunner(BaseRunner):
                     Console.info(f"评估结果: 任务彻底完成。总结: {final_ans}")
                     if id:
                         save_runner_state(id, "plan", {})
+                    self._refresh_project_overview_after_plan()
                     return RunResult(success=True, final_result=final_ans)
                 else:
                     new_plan = replan_decision.get("new_plan", [])
@@ -136,6 +173,7 @@ class PlanAndExecuteRunner(BaseRunner):
                         Console.info("评估结果: 任务彻底完成 (未提供新计划)。")
                         if id:
                             save_runner_state(id, "plan", {})
+                        self._refresh_project_overview_after_plan()
                         return RunResult(success=True, final_result=replan_decision.get("final_answer", "任务已完成。"))
             else:
                 # 评估是否需要调整后续计划
@@ -147,6 +185,7 @@ class PlanAndExecuteRunner(BaseRunner):
                     Console.info(f"评估结果: 总目标已提前完成。总结: {final_ans}")
                     if id:
                         save_runner_state(id, "plan", {})
+                    self._refresh_project_overview_after_plan()
                     return RunResult(success=True, final_result=final_ans)
                 
                 if replan_decision.get("need_adjust"):

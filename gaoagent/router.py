@@ -38,6 +38,7 @@ ROUTES: dict[str, Route] = {
     "config": Route(factory=CoreHandlers, method_name="config"),
     "chat": Route(factory=CoreHandlers, method_name="chat"),
     "task": Route(factory=CoreHandlers, method_name="task"),
+    "refresh": Route(factory=CoreHandlers, method_name="refresh"),
 
     "mcp.list": Route(factory=MCPHandlers, method_name="list"),
     "mcp.add": Route(factory=MCPHandlers, method_name="add"),

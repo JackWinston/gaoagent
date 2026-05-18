@@ -4,6 +4,7 @@ from typing import Any
 
 from gaoagent.core.runner.base_runner import (
     BaseRunner,
+    RequestBaseInfo,
     RunnerConfig,
     RunnerContext,
     RunResult,
@@ -281,6 +282,7 @@ class ReActRunner(BaseRunner):
         *,
         config: RunnerConfig | None = None,
         tools: ToolRegistry | None = None,
+        request_base_info: RequestBaseInfo | None = None,
     ) -> None:
         """__init__ 方法。
         
@@ -298,12 +300,59 @@ class ReActRunner(BaseRunner):
             max_steps=(config.max_steps if config else 32),
             tools=(tools or (config.tools if config else None) or default_tool_registry()),
             llm_invalid_retry=(config.llm_invalid_retry if config else 2),
+            scene=(config.scene if config else "default"),
+            disable_function_call=(config.disable_function_call if config else False),
+            disable_mcp=(config.disable_mcp if config else False),
+            disable_skill=(config.disable_skill if config else False),
+            disable_rag=(config.disable_rag if config else False),
         )
         super().__init__(
             mode="react",
             runner_config=cfg,
+            request_base_info=request_base_info,
         )
         self._current_stream_callback: StreamCallback | None = None
+        self._project_overview_refresh_records: list[dict[str, Any]] = []
+
+    def _is_init_project_overview_scene(self) -> bool:
+        """判断当前是否处于初始化项目概览场景。"""
+        return str(getattr(self.runner_config, "scene", "default") or "default") == "init_project_overview"
+
+    def _is_default_scene(self) -> bool:
+        """判断当前是否为默认普通任务场景。"""
+        return str(getattr(self.runner_config, "scene", "default") or "default") == "default"
+
+    def get_project_overview_refresh_records(self) -> list[dict[str, Any]]:
+        """返回当前回合记录到的项目概览刷新触发记录。"""
+        from gaoagent.core.project_overview_tool import ProjectOverviewTool
+
+        return ProjectOverviewTool.clone_refresh_records(self._project_overview_refresh_records)
+
+    def _record_project_overview_refresh_candidate(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        raw_observation: Any,
+    ) -> None:
+        """记录满足条件的文件新增/删除事件，为后续刷新 `project.md` 提供依据。"""
+        from gaoagent.core.project_overview_tool import ProjectOverviewTool
+
+        record = ProjectOverviewTool.build_refresh_record_from_tool_call(
+            tool_name,
+            arguments,
+            raw_observation,
+        )
+        if record is not None:
+            self._project_overview_refresh_records.append(record)
+
+    def _enabled_local_tool_names(self) -> list[str]:
+        """返回当前配置下允许暴露与执行的本地工具名。"""
+        if self.runner_config.disable_function_call or not self.runner_config.tools:
+            return []
+        names = list(self.runner_config.tools.list_names())
+        if self.runner_config.disable_rag:
+            names = [name for name in names if name != "rag_search"]
+        return names
 
     def decide(self, ctx: RunnerContext) -> StepResult:
         """decide 方法。
@@ -332,6 +381,9 @@ class ReActRunner(BaseRunner):
         返回:
         - tuple: (mcp_servers_raw, mcp_exported_map, mcp_discovery_errors)
         """
+        if self.runner_config.disable_mcp or self.runner_config.disable_function_call:
+            return {}, {}, {}
+
         mcp_servers_all = load_mcp_servers_raw()
         mcp_servers_raw = self._enabled_mcp_servers(mcp_servers_all)
         mcp_cache = load_mcp_tools_cache() or {}
@@ -455,16 +507,23 @@ class ReActRunner(BaseRunner):
         from gaoagent.core.runner.utils import load_history
 
         # 添加系统提示词
-        tool_names = (self.runner_config.tools.list_names() if self.runner_config.tools else [])
+        tool_names = self._enabled_local_tool_names()
         # 将 MCP 导出工具名加入可调用工具清单，避免与内置工具重名。
-        if isinstance(mcp_exported_map, dict) and mcp_exported_map:
+        if not self.runner_config.disable_function_call and isinstance(mcp_exported_map, dict) and mcp_exported_map:
             tool_names = list(tool_names) + sorted([str(x) for x in mcp_exported_map.keys()])
+
+        system_prompt = build_system_prompt(
+            mode=self.mode,
+            tool_names=tool_names,
+            scene=str(getattr(self.runner_config, "scene", "default") or "default"),
+            allow_function_call=not self.runner_config.disable_function_call,
+            enable_rag=not self.runner_config.disable_rag,
+            enable_skill=not self.runner_config.disable_skill,
+        )
 
         system_message = {
             "role": "system",
-            "content": build_system_prompt(
-                mode=self.mode, tool_names=tool_names
-            ),
+            "content": system_prompt,
         }
 
         loaded_history = load_history(id) if id else None
@@ -641,7 +700,8 @@ class ReActRunner(BaseRunner):
                     # 1) 先走内置 ToolRegistry（本地工具）
                     # 2) 再走 MCP 导出工具映射（远程/stdio 工具）
                     # 3) 两者都找不到则返回 Unknown tool
-                    if self.runner_config.tools and name in self.runner_config.tools.list_names():
+                    enabled_local_tools = set(self._enabled_local_tool_names())
+                    if self.runner_config.tools and name in enabled_local_tools:
                         Console.debug(
                             safe_json_dumps(
                                 {
@@ -654,7 +714,17 @@ class ReActRunner(BaseRunner):
                         observation = self.runner_config.tools.call(
                             self.runner_context, ToolCall(name=name, arguments=arguments)
                         )
-                    elif isinstance(mcp_exported_map, dict) and name in mcp_exported_map:
+                        if name in {"write_file", "delete_file"}:
+                            self._record_project_overview_refresh_candidate(
+                                name,
+                                arguments,
+                                getattr(self.runner_context, "last_observation_raw", None),
+                            )
+                    elif (
+                        not self.runner_config.disable_function_call
+                        and isinstance(mcp_exported_map, dict)
+                        and name in mcp_exported_map
+                    ):
                         mcp_meta = mcp_exported_map.get(name) or {}
                         server_name = mcp_meta.get("server")
                         tool_name = mcp_meta.get("tool")
@@ -857,7 +927,24 @@ class ReActRunner(BaseRunner):
         )
         if id:
             save_history(id, self.runner_context.history)
+        self._refresh_project_overview_after_task()
         return RunResult(success=True, final_result=now_step.content)
+
+    def _refresh_project_overview_after_task(self) -> None:
+        """普通任务完成后，尝试刷新当前项目的 `project.md`。"""
+        if not self._is_default_scene():
+            return
+
+        try:
+            from gaoagent.core.project_overview_tool import ProjectOverviewTool
+
+            if not ProjectOverviewTool.should_refresh_from_records(self._project_overview_refresh_records):
+                return
+            ProjectOverviewTool().refresh_current_project_overview_if_exists(
+                refresh_records=self.get_project_overview_refresh_records()
+            )
+        except Exception as exc:
+            Console.warn(f"项目概览刷新失败：{exc}")
 
     # --------------- 主控循环 ---------------
 
@@ -1028,21 +1115,19 @@ class ReActRunner(BaseRunner):
             base_url=self.request_base_info.baseurl,
             api_key=self.request_base_info.api_key,
         )
-        tool_names = (
-            self.runner_config.tools.list_names() if self.runner_config.tools else []
-        )
+        tool_names = self._enabled_local_tool_names()
         # 只使用 run() 阶段已确定的 MCP 工具映射，确保"模型可见工具集"
         # 与"执行期可路由工具集"完全一致，避免出现 Unknown tool 偏差。
         mcp_exported_map = getattr(self, "_mcp_exported_map", None)
         if not isinstance(mcp_exported_map, dict):
             mcp_exported_map = {}
         all_tool_names = list(tool_names)
-        if isinstance(mcp_exported_map, dict) and mcp_exported_map:
+        if not self.runner_config.disable_function_call and isinstance(mcp_exported_map, dict) and mcp_exported_map:
             all_tool_names += sorted([str(x) for x in mcp_exported_map.keys()])
 
         tools = (
             build_function_specs(all_tool_names, mcp_exported_map=mcp_exported_map, tool_registry=self.runner_config.tools)
-            if all_tool_names
+            if all_tool_names and not self.runner_config.disable_function_call
             else None
         )
         tool_choice = "auto" if tools else None

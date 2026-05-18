@@ -4,6 +4,7 @@ from gaoagent.core.runner.console import Console
 from gaoagent.core.chat_runner import ChatRunner
 from gaoagent.core.core_config_default import CoreConfigDefault
 from gaoagent.core.core_init import CoreInit
+from gaoagent.core.project_overview_tool import ProjectOverviewTool
 from gaoagent.core.task_runner import TaskRunner
 
 
@@ -131,3 +132,10 @@ class CoreHandlers:
         - `None`。任务结果通过终端输出反馈给用户。
         """
         TaskRunner().run(question,mode,id=id,images=images)
+
+    def refresh(self) -> None:
+        """强制重建当前项目的 `.gaoagent/project.md`。"""
+        if not ProjectOverviewTool().rebuild_current_project_overview():
+            Console.warn("未检测到已初始化项目，无法刷新 project.md。请先在项目目录执行 `gaoagent init`。")
+            return
+        Console.info("已重新生成当前项目概览：`.gaoagent/project.md`")

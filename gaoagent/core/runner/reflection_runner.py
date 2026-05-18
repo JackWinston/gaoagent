@@ -32,6 +32,31 @@ class ReflectionRunner(BaseRunner):
         self.target_runner = target_runner
         self.max_reflections = max_reflections
         self._client: OpenAICompatibleHttpClient | None = None
+        self._project_overview_refresh_records: list[dict[str, Any]] = []
+
+    def _merge_target_project_overview_refresh_records(self) -> None:
+        """合并目标执行器产生的项目概览刷新触发记录。"""
+        from gaoagent.core.project_overview_tool import ProjectOverviewTool
+
+        self._project_overview_refresh_records = ProjectOverviewTool.merge_refresh_records_from_runner(
+            self._project_overview_refresh_records,
+            self.target_runner,
+        )
+
+    def _refresh_project_overview_after_reflection(self) -> None:
+        """普通 retry 场景在整体结束后刷新一次 `project.md`。"""
+        if str(getattr(self.runner_config, "scene", "default") or "default") != "default":
+            return
+        try:
+            from gaoagent.core.project_overview_tool import ProjectOverviewTool
+
+            if not ProjectOverviewTool.should_refresh_from_records(self._project_overview_refresh_records):
+                return
+            ProjectOverviewTool().refresh_current_project_overview_if_exists(
+                refresh_records=ProjectOverviewTool.clone_refresh_records(self._project_overview_refresh_records)
+            )
+        except Exception as exc:
+            Console.warn(f"项目概览刷新失败：{exc}")
 
     def decide(self, ctx: RunnerContext) -> StepResult:
         """
@@ -86,6 +111,7 @@ class ReflectionRunner(BaseRunner):
                     last_result.final_result = f"{last_result.final_result}\n\n[最终评估结论]: {feedback}"
                 if id:
                     save_runner_state(id, "reflection", {})
+                self._refresh_project_overview_after_reflection()
                 return last_result
             else:
                 Console.warn(f"[Reflection] 评估结果: 任务尚未彻底完成。反馈意见: {feedback}")
@@ -102,11 +128,13 @@ class ReflectionRunner(BaseRunner):
                     )
                     Console.info(f"\n>>> [Reflection] 第 {attempt + 1} 次基于反思意见的重新执行...")
                     last_result = self.target_runner.run(current_question, id=id)
+                    self._merge_target_project_overview_refresh_records()
                 else:
                     Console.warn("[Reflection] 已达到最大反思重试次数，结束反思。")
 
         if id:
             save_runner_state(id, "reflection", {})
+        self._refresh_project_overview_after_reflection()
         return last_result
 
     def run(self, question: str, id: str | None = None, images: str | None = None) -> RunResult:
@@ -135,6 +163,7 @@ class ReflectionRunner(BaseRunner):
 
         # 1. 获取 target_runner 的初始结果
         initial_result = self.target_runner.run(question, id=id, images=images)
+        self._merge_target_project_overview_refresh_records()
         
         # 2. 将 question 和 initial_result 传入 reflect 进行评估和可能的重试
         return self.reflect(question, initial_result, id=id)

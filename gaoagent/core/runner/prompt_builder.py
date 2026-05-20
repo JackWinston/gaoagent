@@ -9,13 +9,13 @@ from gaoagent.core.runner.utils import load_skills, project_config_dir, try_proj
 
 
 def build_system_prompt(
-    tool_names: list[str],
-    mode: Mode,
-    *,
-    scene: str = "default",
-    allow_function_call: bool = True,
-    enable_rag: bool = True,
-    enable_skill: bool = True,
+        tool_names: list[str],
+        mode: Mode,
+        *,
+        scene: str = "default",
+        allow_function_call: bool = True,
+        enable_rag: bool = True,
+        enable_skill: bool = True,
 ) -> str:
     """
     构建LLM请求上下文（标准格式：system + 历史对话 + 当前用户消息）
@@ -34,6 +34,15 @@ def build_system_prompt(
     elif mode == "plan":
         return build_plan_system_text()
     elif mode == "retry":
+        return build_react_system_text(
+            tool_names=tool_names,
+            scene=scene,
+            allow_function_call=allow_function_call,
+            enable_rag=enable_rag,
+            enable_skill=enable_skill,
+        )
+    else:
+        # React 默认
         return build_react_system_text(
             tool_names=tool_names,
             scene=scene,
@@ -66,9 +75,10 @@ Python Version : {platform.python_version()}
 当前时间 : {time.strftime("%Y-%m-%d %H:%M:%S %Z", time.localtime())}
 
 【当前项目目录】
-{ try_project_root_dir() or os.getcwd()}
+{try_project_root_dir() or os.getcwd()}
 """
     return base_prompt
+
 
 def build_reflection_evaluation_prompt(original_question: str, result_text: str) -> str:
     """
@@ -91,13 +101,14 @@ def build_reflection_evaluation_prompt(original_question: str, result_text: str)
     )
     return prompt
 
+
 def build_react_system_text(
-    *,
-    tool_names: list[str] | None,
-    scene: str = "default",
-    allow_function_call: bool = True,
-    enable_rag: bool = True,
-    enable_skill: bool = True,
+        *,
+        tool_names: list[str] | None,
+        scene: str = "default",
+        allow_function_call: bool = True,
+        enable_rag: bool = True,
+        enable_skill: bool = True,
 ) -> str:
     """build_react_system_text 函数。
 
@@ -112,7 +123,7 @@ def build_react_system_text(
     """
     available_tools = tool_names or []
 
-    rag_section : str = ""
+    rag_section: str = ""
     if enable_rag:
         from gaoagent.core.runner.utils import load_rag
 
@@ -132,21 +143,21 @@ def build_react_system_text(
             )
 
     a2a_str = _get_a2a_str()
-    a2a_section : str = ""
+    a2a_section: str = ""
     if a2a_str is None:
         a2a_section = ""
-    else :
+    else:
         a2a_section = (
-        f"""
+            f"""
 【A2A 智能体协作规则】
 当前项目已连接以下远程 A2A 智能体。如果任务超出你的能力边界或需要协作，请通过 `a2a_call` 工具委派任务给对应的智能体：
 {a2a_str}
 """
-        if a2a_str
-        else ""
-    )
+            if a2a_str
+            else ""
+        )
 
-    skill_section : str = ""
+    skill_section: str = ""
     if enable_skill:
         skill_str = _get_skill_str()
         if skill_str is not None:
@@ -172,9 +183,9 @@ def build_react_system_text(
 
     project_overview_section = ""
     if (
-        scene == "default"
-        and allow_function_call
-        and "read_file" in available_tools
+            scene == "default"
+            and allow_function_call
+            and "read_file" in available_tools
     ):
         cfg_dir = project_config_dir()
         overview_file = (cfg_dir / "project.md") if cfg_dir is not None else None
@@ -245,7 +256,7 @@ Python Version : {platform.python_version()}
 当前时间 : {time.strftime("%Y-%m-%d %H:%M:%S %Z", time.localtime())}
 
 【当前项目目录】
-{ try_project_root_dir() or os.getcwd()}
+{try_project_root_dir() or os.getcwd()}
 
 """
     return base_prompt
@@ -286,6 +297,7 @@ def _get_skill_str() -> str | None:
 
     return "".join(result)
 
+
 def _get_a2a_str() -> str | None:
     """
     构建 A2A 远程 Agent 列表字符串，用于在系统提示词中引用。
@@ -294,7 +306,7 @@ def _get_a2a_str() -> str | None:
     agents = load_a2a_agents()
     if not agents:
         return None
-    
+
     result: list[str] = []
     for idx, (name, info) in enumerate(sorted(agents.items()), 1):
         url = info.get("url", "未知地址")

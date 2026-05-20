@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import functools
 import json
+import os
 from pathlib import Path
 import subprocess
 from typing import Any, Callable
@@ -207,7 +208,7 @@ def _list_dir(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     path = args.get("path", ".")
     if not isinstance(path, str) or not path.strip():
         return {
-            "ok": False,
+            "success": False,
             "error": {
                 "type": "ValueError",
                 "message": "path must be non-empty str",
@@ -669,6 +670,13 @@ def _delete_file(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
             "path": str(path),
         }
 
+# 命令黑名单 - 这些命令不允许执行
+_BLOCKED_COMMANDS = {
+    "rm -rf /",  # 递归删除根目录
+    "mkfs",      # 格式化文件系统
+    "dd if=/dev/zero",  # 覆盖磁盘
+    ":(){:|:&};:",  # fork bomb
+}
 
 @tool_spec(
     description="在本地执行控制台命令并返回输出。workdir 必须是当前工作目录或其子目录。",
@@ -677,6 +685,11 @@ def _delete_file(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
         "properties": {
             "workdir": {"type": "string"},
             "command": {"type": "string"},
+            "timeout": {
+                "type": "integer",
+                "default": 30,
+                "description": "命令执行超时时间（秒），默认 30 秒"
+            },
         },
         "required": ["workdir", "command"],
         "additionalProperties": False,
@@ -684,19 +697,22 @@ def _delete_file(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
 )
 def _run_command(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
     """在本地执行 shell 命令并返回输出。
-    
+
     安全限制: workdir 必须是当前工作目录或其子目录。
-    
+
     参数:
     - workdir: 命令执行的工作目录（必填）
     - command: 要执行的 shell 命令（必填）
-    
+    - timeout: 命令执行超时时间（秒），默认 30 秒
+
     返回:
     - success=True 时: {"success": True, "exit_code": 0, "stdout": "...", "stderr": "...", "response": "..."}
     - success=False 时: {"success": False, "error": {"type": "...", "message": "..."}}
     """
     workdir = args.get("workdir")
     command = args.get("command")
+    timeout = args.get("timeout", 30)
+
     if not isinstance(workdir, str) or not workdir.strip():
         return {
             "success": False,
@@ -713,6 +729,27 @@ def _run_command(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
                 "message": "command must be non-empty str",
             },
         }
+    if not isinstance(timeout, int) or timeout <= 0:
+        return {
+            "success": False,
+            "error": {
+                "type": "ValueError",
+                "message": "timeout must be positive integer",
+            },
+        }
+
+    # 检查命令黑名单
+    command_lower = command.strip().lower()
+    for blocked in _BLOCKED_COMMANDS:
+        if blocked in command_lower:
+            return {
+                "success": False,
+                "error": {
+                    "type": "SecurityError",
+                    "message": f"命令包含被禁止的操作: {blocked}",
+                },
+                "command": command,
+            }
 
     try:
         cwd = Path.cwd().resolve()
@@ -751,6 +788,25 @@ def _run_command(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
                 "cwd": str(cwd),
             }
 
+        # 使用干净的环境变量，只传递必要的变量
+        clean_env = {
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": os.environ.get("HOME", ""),
+            "USER": os.environ.get("USER", ""),
+            "LANG": os.environ.get("LANG", "en_US.UTF-8"),
+            "LC_ALL": os.environ.get("LC_ALL", "en_US.UTF-8"),
+        }
+
+        # 在 Windows 上需要额外的环境变量
+        if os.name == "nt":
+            clean_env.update({
+                "SystemRoot": os.environ.get("SystemRoot", ""),
+                "TEMP": os.environ.get("TEMP", ""),
+                "TMP": os.environ.get("TMP", ""),
+                "USERPROFILE": os.environ.get("USERPROFILE", ""),
+                "APPDATA": os.environ.get("APPDATA", ""),
+            })
+
         completed = subprocess.run(
             command,
             cwd=str(target),
@@ -759,9 +815,20 @@ def _run_command(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
             text=True,
             encoding="utf-8",
             errors="replace",
+            timeout=timeout,
+            env=clean_env,
         )
+
         stdout = completed.stdout or ""
         stderr = completed.stderr or ""
+
+        # 限制输出大小，避免内存问题
+        max_output_size = 1024 * 1024  # 1MB
+        if len(stdout) > max_output_size:
+            stdout = stdout[:max_output_size] + "\n... (输出被截断，超过 1MB 限制)"
+        if len(stderr) > max_output_size:
+            stderr = stderr[:max_output_size] + "\n... (输出被截断，超过 1MB 限制)"
+
         return {
             "success": completed.returncode == 0,
             "workdir": str(target),
@@ -770,6 +837,48 @@ def _run_command(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
             "stdout": stdout,
             "stderr": stderr,
             "response": f"{stdout}{stderr}",
+            "timeout": timeout,
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "success": False,
+            "error": {
+                "type": "TimeoutExpired",
+                "message": f"命令执行超时（{timeout}秒）",
+            },
+            "workdir": str(workdir),
+            "command": command,
+            "timeout": timeout,
+        }
+    except PermissionError as e:
+        return {
+            "success": False,
+            "error": {
+                "type": "PermissionError",
+                "message": f"权限不足: {str(e)}",
+            },
+            "workdir": str(workdir),
+            "command": command,
+        }
+    except FileNotFoundError as e:
+        return {
+            "success": False,
+            "error": {
+                "type": "FileNotFoundError",
+                "message": f"命令或文件未找到: {str(e)}",
+            },
+            "workdir": str(workdir),
+            "command": command,
+        }
+    except OSError as e:
+        return {
+            "success": False,
+            "error": {
+                "type": "OSError",
+                "message": f"系统错误: {str(e)}",
+            },
+            "workdir": str(workdir),
+            "command": command,
         }
     except Exception as e:
         return {
@@ -915,7 +1024,9 @@ def _a2a_call(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
                         
                 return {"success": True, "agent_name": agent_name, "result": final_result}
 
-        return asyncio.run(_do_call())
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, _do_call()).result()
         
     except ImportError:
         return {"success": False, "error": "未安装 a2a-sdk，无法调用 A2A 节点。请先执行 pip install a2a-sdk"}

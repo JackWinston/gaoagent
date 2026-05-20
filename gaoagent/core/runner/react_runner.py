@@ -27,7 +27,7 @@ from gaoagent.core.runner.utils import (
 from gaoagent.core.runner.prompt_builder import build_system_prompt
 from gaoagent.core.runner.function_call_protocol import build_function_specs
 from gaoagent.core.runner.run_logger import get_current_run_logger
-from gaoagent.mcp.mcp_client_compat import MCPStdioClientSync, build_mcp_tools_cache_payload
+from gaoagent.mcp.mcp_client_compat import MCPClientSync, build_mcp_tools_cache_payload
 
 
 class ReActRunner(BaseRunner):
@@ -407,7 +407,7 @@ class ReActRunner(BaseRunner):
             try:
                 payload = build_mcp_tools_cache_payload(
                     mcp_servers_raw,
-                    connect_and_list_tools=lambda name, body: MCPStdioClientSync.from_config(
+                    connect_and_list_tools=lambda name, body: MCPClientSync.from_config(
                         server_name=name,
                         config=body,
                     ).list_tools(),
@@ -756,7 +756,7 @@ class ReActRunner(BaseRunner):
                                 )
                             )
                             # MCP 调用结果统一封装为 success/result 结构，便于模型侧稳定解析。
-                            observation = MCPStdioClientSync.from_config(
+                            observation = MCPClientSync.from_config(
                                 server_name=server_name,
                                 config=server_cfg,
                             ).call_tool(tool_name=tool_name, arguments=arguments)

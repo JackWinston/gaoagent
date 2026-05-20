@@ -15,7 +15,7 @@ from gaoagent.core.core_config_default import CoreConfigDefault
 from gaoagent.core.init_config_tool import InitConfigTool
 from gaoagent.core.init_registry_tool import InitRegistryTool
 from gaoagent.core.project_overview_tool import ProjectOverviewTool
-from gaoagent.mcp.mcp_client_compat import MCPStdioClientSync, build_mcp_tools_cache_payload
+from gaoagent.mcp.mcp_client_compat import MCPClientSync, build_mcp_tools_cache_payload
 from gaoagent.rag.rag_store_path import (
     resolve_chroma_store_dir,
 )
@@ -103,7 +103,7 @@ class CoreInit(InitConfigTool, ProjectOverviewTool, InitRegistryTool):
             try:
                 cache_payload = build_mcp_tools_cache_payload(
                     selected_mcp,
-                    connect_and_list_tools=lambda name, body: MCPStdioClientSync.from_config(
+                    connect_and_list_tools=lambda name, body: MCPClientSync.from_config(
                         server_name=name,
                         config=body,
                     ).list_tools(),

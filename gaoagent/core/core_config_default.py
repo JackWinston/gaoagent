@@ -10,7 +10,7 @@ from gaoagent.core.runner.console import Console
 from gaoagent.core.handler_utils import read_json_file, write_json, prompt_non_empty_str, prompt_positive_int
 
 from gaoagent.mcp.mcp_client_compat import (
-    MCPStdioClientSync,
+    MCPClientSync,
     build_mcp_tools_cache_payload,
     write_mcp_tools_cache,
 )
@@ -109,7 +109,7 @@ class CoreConfigDefault:
                 # - 工具 schema 可直接注入到 LLM 的 tools 定义中，提高参数生成质量。
                 cache_payload = build_mcp_tools_cache_payload(
                     mcp_configs,
-                    connect_and_list_tools=lambda name, body: MCPStdioClientSync.from_config(
+                    connect_and_list_tools=lambda name, body: MCPClientSync.from_config(
                         server_name=name,
                         config=body,
                     ).list_tools(),

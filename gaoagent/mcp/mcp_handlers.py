@@ -10,7 +10,7 @@ from gaoagent.core.runner.console import Console
 
 from gaoagent.core.core_config_default import CoreConfigDefault
 from gaoagent.core.handler_utils import read_json_file, write_json, resolve_scope_and_config_path
-from gaoagent.mcp.mcp_client_compat import MCPStdioClientSync
+from gaoagent.mcp.mcp_client_compat import MCPClientSync
 from gaoagent.core.runner.utils import (
     global_config_dir,
     project_config_dir,
@@ -150,7 +150,7 @@ class MCPHandlers:
 
         start = time.perf_counter()
         try:
-            tools = MCPStdioClientSync.from_config(
+            tools = MCPClientSync.from_config(
                 server_name=target, config=body
             ).list_tools()
             duration_ms = int((time.perf_counter() - start) * 1000)

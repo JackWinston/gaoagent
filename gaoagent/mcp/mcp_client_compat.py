@@ -153,7 +153,7 @@ class MCPServerConfig:
         )
 
 
-class MCPStdioClientSync:
+class MCPClientSync:
     """MCP 同步客户端兼容层（面向同步业务代码）。
 
     设计背景:
@@ -188,7 +188,7 @@ class MCPStdioClientSync:
         self.timeout = timeout
 
     @staticmethod
-    def from_config(*, server_name: str, config: dict[str, Any]) -> "MCPStdioClientSync":
+    def from_config(*, server_name: str, config: dict[str, Any]) -> "MCPClientSync":
         """从配置字典构建客户端，并执行 transport 级前置校验。"""
         cfg = MCPServerConfig.from_dict(config)
         transport_type = cfg.type.strip().lower()
@@ -198,7 +198,7 @@ class MCPStdioClientSync:
             raise ValueError(f"MCP server `{server_name}` 缺少可执行 command")
         if transport_type in ("sse", "streamable_http") and not cfg.url.strip():
             raise ValueError(f"MCP server `{server_name}` 缺少 url")
-        return MCPStdioClientSync(
+        return MCPClientSync(
             server_name=server_name,
             transport_type=transport_type,
             command=cfg.command,

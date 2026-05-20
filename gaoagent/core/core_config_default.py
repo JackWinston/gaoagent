@@ -5,7 +5,6 @@ import datetime
 import json
 import shutil
 import time
-import click
 from gaoagent.core.runner.console import Console
 
 from gaoagent.core.handler_utils import read_json_file, write_json, prompt_non_empty_str, prompt_positive_int
@@ -358,8 +357,7 @@ class CoreConfigDefault:
         1. 询问并获取知识库名称；
         2. 在 `~/.gaoagent/rag/<知识库名>` 创建目录；
         3. 提示用户复制文件到该目录；
-        4. Embedding 与向量库写入暂不实现；
-        5. 输出创建成功信息。
+        4. 输出创建成功信息。
         """
         rag_dir = rag_root_dir if rag_root_dir is not None else (self._ensure_config_dir() / "rag")
         rag_dir.mkdir(parents=True, exist_ok=True)

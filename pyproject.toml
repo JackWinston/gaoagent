@@ -1,9 +1,18 @@
 [project]
 name = "gaoagent"
 version = "0.1.0"
-description = "Add your description here"
+description = "一个面向终端的 Python 智能体工具，支持任务执行、MCP 服务接入、Skills 管理、RAG 知识库检索与 API 配置管理。"
 readme = "README.md"
 requires-python = ">=3.12"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
   "click>=8.1",
   "modelcontextprotocol",
@@ -14,6 +23,9 @@ dependencies = [
   "starlette>=0.40.0",
   "rich>=13.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/JackWinston/gaoagent"
 
 [project.scripts]
 gaoagent = "gaoagent.cli:main"

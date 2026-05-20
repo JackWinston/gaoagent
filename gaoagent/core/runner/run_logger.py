@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from gaoagent.core.runner.utils import project_config_dir
+from gaoagent.core.runner.utils import project_config_dir, safe_json_dumps
 
 
 class RunLogger:
@@ -41,7 +41,7 @@ class RunLogger:
         if step is not None:
             record["step"] = step
         record["data"] = _to_jsonable(payload)
-        line = _safe_json_dumps(record)
+        line = safe_json_dumps(record)
         with self._lock:
             self.file_path.parent.mkdir(parents=True, exist_ok=True)
             with self.file_path.open("a", encoding="utf-8") as f:
@@ -146,26 +146,4 @@ def _to_jsonable(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return repr(value)
-
-
-def _safe_json_dumps(value: Any) -> str:
-    """_safe_json_dumps 函数。
-    
-    用途:
-    - 安全地将 Python 对象转换为 JSON 字符串，处理非 JSON 序列化的情况。
-    
-    参数:
-    - value: 输入参数，用于指定要转换的 Python 对象。
-    
-    返回:
-    - str: 返回 JSON 字符串表示；如果转换失败，返回对象的字符串表示。
-    """
-    import json
-
-    try:
-        return json.dumps(value, ensure_ascii=False, sort_keys=True)
-    except Exception as e:
-        from gaoagent.core.runner.console import Console
-        Console.debug(f"JSON 序列化失败，回退 repr：{e}")
-        return repr(value)
 

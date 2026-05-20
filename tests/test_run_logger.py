@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch, MagicMock
 from pathlib import Path
 
 from gaoagent.core.runner.run_logger import (
     RunLogger,
     _to_jsonable,
-    _safe_json_dumps,
     get_current_run_logger,
     set_current_run_logger,
     reset_current_run_logger,
 )
+
+from gaoagent.core.runner.utils import safe_json_dumps
 
 
 class TestToJsonable(unittest.TestCase):
@@ -49,17 +49,18 @@ class TestToJsonable(unittest.TestCase):
         class Point:
             x: int
             y: int
+
         result = _to_jsonable(Point(1, 2))
         self.assertEqual(result, {"x": 1, "y": 2})
 
 
 class TestSafeJsonDumps(unittest.TestCase):
     def test_simple(self) -> None:
-        result = _safe_json_dumps({"a": 1})
+        result = safe_json_dumps({"a": 1})
         self.assertEqual(result, '{"a": 1}')
 
     def test_non_serializable(self) -> None:
-        result = _safe_json_dumps(object())
+        result = safe_json_dumps(object())
         self.assertIsInstance(result, str)
 
 

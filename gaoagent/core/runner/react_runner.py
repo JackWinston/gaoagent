@@ -432,7 +432,8 @@ class ReActRunner(BaseRunner):
                                 mcp_discovery_errors[server_name] = error
                 if mcp_exported_map:
                     write_mcp_tools_cache_for_current_scope(payload)
-            except Exception:
+            except Exception as e:
+                Console.error(f"MCP 工具缓存构建失败：{e}")
                 mcp_exported_map = {}
                 mcp_discovery_errors["_runtime"] = "build_mcp_tools_cache_payload failed"
 

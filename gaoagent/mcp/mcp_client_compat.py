@@ -337,7 +337,9 @@ def _serialize_call_result(result: Any) -> dict[str, Any]:
     try:
         json.dumps(result)
         return {"content": result}
-    except Exception:
+    except Exception as e:
+        from gaoagent.core.runner.console import Console
+        Console.debug(f"MCP 结果 JSON 序列化失败，回退 repr：{e}")
         return {"content": [{"type": type(result).__name__, "value": repr(result)}]}
 
 
@@ -456,6 +458,8 @@ def read_mcp_tools_cache() -> dict[str, Any] | None:
         return None
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as e:
+        from gaoagent.core.runner.console import Console
+        Console.error(f"读取 MCP 工具缓存失败：{path}，{e}")
         return None
     return value if isinstance(value, dict) else None

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from gaoagent.core.runner.console import Console
 from gaoagent.rag.rag_chroma_indexer import RagChromaIndexerConfig
 from gaoagent.rag.rag_store_path import resolve_chroma_store_dir
 
@@ -50,13 +51,15 @@ class RagApiConfigStore:
         """
         try:
             path = self.config_file()
-        except Exception:
+        except Exception as e:
+            Console.error(f"获取 RAG API 配置路径失败：{e}")
             return self._default_payload()
         if not path.exists() or not path.is_file():
             return self._default_payload()
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as e:
+            Console.error(f"读取 RAG API 配置失败：{path}，{e}")
             return self._default_payload()
         if not isinstance(payload, dict):
             return self._default_payload()

@@ -152,8 +152,8 @@ class ToolRegistry:
         raw = handler(ctx, call.arguments)
         try:
             setattr(ctx, "last_observation_raw", raw)
-        except Exception:
-            pass
+        except Exception as e:
+            Console.debug(f"设置 last_observation_raw 失败：{e}")
         content = raw if isinstance(raw, str) else safe_json_dumps(raw)
         return content
 
@@ -253,7 +253,8 @@ def _list_dir(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
             try:
                 st = child.stat()
                 size = int(st.st_size)
-            except Exception:
+            except Exception as e:
+                Console.debug(f"获取文件大小失败：{child}，{e}")
                 size = None
             items.append(
                 {
@@ -1016,8 +1017,8 @@ def _a2a_call(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
                             t = await client.get_task(task.id)
                             if t.artifacts and t.artifacts[-1].parts:
                                 final_result = t.artifacts[-1].parts[0].text
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            Console.debug(f"获取 A2A 任务结果失败：{e}")
                         break
                     elif event.type == "task_failed":
                         return {"success": False, "error": f"远程任务执行失败: {event.error}"}
@@ -1250,7 +1251,8 @@ def _search_workspace(_ctx: Any, args: dict[str, Any]) -> dict[str, Any]:
                 continue
             try:
                 event = json.loads(raw)
-            except Exception:
+            except Exception as e:
+                Console.debug(f"ripgrep JSON 行解析失败：{e}")
                 continue
             if event.get("type") != "match":
                 continue

@@ -189,7 +189,8 @@ class InitConfigTool:
 
         try:
             content = gitignore.read_text(encoding="utf-8")
-        except Exception:
+        except Exception as e:
+            Console.error(f"读取 .gitignore 失败：{e}")
             return None
 
         lines = content.splitlines()

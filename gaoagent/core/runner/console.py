@@ -216,7 +216,8 @@ def _is_debug_enabled() -> bool:
         return False
     try:
         payload = json.loads(env_file.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as e:
+        _rich_err.print(f"[debug]读取 env.json 失败：{e}[/debug]")
         return False
     if not isinstance(payload, dict):
         return False

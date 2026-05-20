@@ -11,6 +11,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from gaoagent.core.runner.console import Console
 from gaoagent.rag.rag_api_config import RagApiConfigStore
 from gaoagent.rag.rag_chroma_indexer import RagChromaIndexer, RagChromaIndexerConfig
 from gaoagent.rag.rag_store_path import (
@@ -347,7 +348,8 @@ class RagChromaRetriever:
                 ).fetchall()
                 names = {str(r[0]) for r in rows}
                 return {"bm25_docs", "bm25_terms", "bm25_meta"}.issubset(names)
-        except Exception:
+        except Exception as e:
+            Console.debug(f"BM25 SQLite 检查失败：{e}")
             return False
 
     def _bm25_recall_from_sqlite(self, *, query: str, top_k: int) -> list[dict[str, Any]]:
@@ -420,7 +422,8 @@ class RagChromaRetriever:
                 metadata_json = doc_entry[2]
                 try:
                     metadata = json.loads(metadata_json)
-                except Exception:
+                except Exception as e:
+                    Console.debug(f"BM25 metadata JSON 解析失败：{e}")
                     metadata = {}
                 items.append(
                     {

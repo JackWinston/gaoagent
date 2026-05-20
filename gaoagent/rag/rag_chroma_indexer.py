@@ -361,7 +361,8 @@ class RagChromaIndexer:
         for encoding in ("utf-8", "utf-8-sig", "gbk"):
             try:
                 return file_path.read_text(encoding=encoding).strip()
-            except Exception:
+            except Exception as e:
+                Console.debug(f"读取文件失败（{encoding}）：{file_path}，{e}")
                 continue
         return ""
 
@@ -723,7 +724,8 @@ class RagChromaIndexer:
                 ).fetchall()
                 names = {str(r[0]) for r in rows}
                 return {"bm25_docs", "bm25_terms", "bm25_meta"}.issubset(names)
-        except Exception:
+        except Exception as e:
+            Console.debug(f"BM25 SQLite 校验失败：{e}")
             return False
 
     def _use_remote_embedding(self) -> bool:

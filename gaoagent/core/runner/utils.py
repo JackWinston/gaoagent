@@ -26,6 +26,11 @@ if TYPE_CHECKING:
     from gaoagent.core.runner.base_runner import RequestBaseInfo, StepResult
 
 
+def _console():
+    from gaoagent.core.runner.console import Console
+    return Console
+
+
 PROJECTS_REGISTRY_FILENAME = "inited_projects.txt"
 
 
@@ -73,7 +78,8 @@ def safe_json_dumps(value: Any) -> str:
     """
     try:
         return json.dumps(value, ensure_ascii=False, sort_keys=True)
-    except Exception:
+    except Exception as e:
+        _console().debug(f"JSON 序列化失败，回退 repr：{e}")
         return repr(value)
 
 
@@ -180,7 +186,8 @@ def load_project_registry_paths() -> list[Path]:
         return []
     try:
         lines = registry_file.read_text(encoding="utf-8").splitlines()
-    except Exception:
+    except Exception as e:
+        _console().error(f"读取项目注册文件失败：{e}")
         return []
 
     roots: list[Path] = []
@@ -191,7 +198,8 @@ def load_project_registry_paths() -> list[Path]:
             continue
         try:
             root = Path(raw).expanduser().resolve()
-        except Exception:
+        except Exception as e:
+            _console().error(f"解析注册路径失败：{raw}，{e}")
             continue
         key = str(root)
         if key in seen:
@@ -290,7 +298,8 @@ def load_request_base_info(
         return None
     try:
         config = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as e:
+        _console().error(f"读取 API 配置失败：{e}")
         return None
 
     if not isinstance(config, dict):
@@ -349,7 +358,8 @@ def load_mcp_servers_raw() -> dict[str, Any]:
         return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as e:
+        _console().error(f"读取 MCP servers 配置失败：{e}")
         return {}
     if not isinstance(payload, dict):
         return {}
@@ -372,7 +382,8 @@ def load_mcp_tools_cache() -> dict[str, Any] | None:
         return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as e:
+        _console().error(f"读取 MCP 工具缓存失败：{e}")
         return None
     return payload if isinstance(payload, dict) else None
 
@@ -415,8 +426,8 @@ def load_history(session_id: str) -> list[dict[str, Any]] | None:
         payload = json.loads(history_file.read_text(encoding="utf-8"))
         if isinstance(payload, list):
             return payload
-    except Exception:
-        pass
+    except Exception as e:
+        _console().error(f"加载历史记录失败：{e}")
     return None
 
 
@@ -460,8 +471,8 @@ def load_runner_state(session_id: str, runner_type: str) -> dict[str, Any] | Non
         payload = json.loads(state_file.read_text(encoding="utf-8"))
         if isinstance(payload, dict):
             return payload
-    except Exception:
-        pass
+    except Exception as e:
+        _console().error(f"加载执行器状态失败：{e}")
     return None
 
 
@@ -662,8 +673,8 @@ def load_a2a_agents() -> dict[str, Any] | None:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(payload, dict) and isinstance(payload.get("agents"), dict):
             return payload["agents"]
-    except Exception:
-        pass
+    except Exception as e:
+        _console().error(f"加载 A2A Agent 配置失败：{e}")
     return None
 
 
@@ -749,7 +760,8 @@ def parse_llm_response(response: HttpResponse) -> StepResult:
     if payload is None and isinstance(response.text, str) and response.text.strip():
         try:
             parsed = json.loads(response.text)
-        except Exception:
+        except Exception as e:
+            _console().debug(f"LLM 响应二次 JSON 解析失败：{e}")
             parsed = None
         payload = parsed if isinstance(parsed, dict) else None
 
@@ -873,7 +885,8 @@ def is_image_file(file_path: str) -> bool:
         p = Path(file_path)
         ext = p.suffix.lower()
         return ext in IMAGE_EXTENSIONS
-    except Exception:
+    except Exception as e:
+        _console().debug(f"判断图片文件失败：{e}")
         return False
 
 
@@ -892,12 +905,12 @@ def get_image_mime_type(file_path: str) -> str:
         mime = IMAGE_MIME_TYPES.get(ext)
         if mime:
             return mime
-        # 尝试使用mimetypes模块猜测
         guessed, _ = mimetypes.guess_type(str(p))
         if guessed and guessed.startswith("image/"):
             return guessed
-        return "image/png"  # 默认返回png
-    except Exception:
+        return "image/png"
+    except Exception as e:
+        _console().debug(f"获取图片 MIME 类型失败：{e}")
         return "image/png"
 
 
@@ -923,7 +936,8 @@ def image_to_base64_url(file_path: str) -> str | None:
             data = f.read()
         b64 = base64.b64encode(data).decode("utf-8")
         return f"data:{mime_type};base64,{b64}"
-    except Exception:
+    except Exception as e:
+        _console().error(f"图片转 base64 失败：{file_path}，{e}")
         return None
 
 

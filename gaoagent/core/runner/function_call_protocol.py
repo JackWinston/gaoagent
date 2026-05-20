@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from gaoagent.core.runner.console import Console
 from gaoagent.core.runner.utils import summarize, truncate_text
 
 
@@ -38,8 +39,8 @@ def build_function_specs(
                 if spec is not None:
                     desc = spec.description
                     params = spec.parameters
-            except Exception:
-                pass
+            except Exception as e:
+                Console.debug(f"获取工具规格失败：{name}，{e}")
         
         # 2. 如果 tool_registry 没有提供，尝试从 mcp_exported_map 获取
         if desc is None or params is None:
@@ -169,7 +170,8 @@ def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
                 break
             try:
                 obj, next_idx = decoder.raw_decode(text, idx)
-            except Exception:
+            except Exception as e:
+                Console.debug(f"JSON 对象序列解析终止：{e}")
                 break
             if isinstance(obj, dict):
                 items.append(obj)
@@ -215,7 +217,8 @@ def map_chat_completion_to_protocol(payload: dict[str, Any]) -> dict[str, Any]:
         raw_text = (strip_code_fence(content))
         try:
             parsed = json.loads(raw_text)
-        except Exception:
+        except Exception as e:
+            Console.debug(f"LLM content JSON 解析失败：{e}")
             parsed = None
         # 单对象 JSON 协议：{"type":"thought|final|..."}。
         if isinstance(parsed, dict) and isinstance(parsed.get("type"), str):
@@ -271,6 +274,7 @@ def parse_tool_arguments(raw: Any) -> dict[str, Any]:
             if isinstance(parsed, dict):
                 return parsed
             return {"value": parsed}
-        except Exception:
+        except Exception as e:
+            Console.debug(f"工具参数 JSON 解析失败：{e}")
             return {"_raw": text}
     return {}

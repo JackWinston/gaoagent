@@ -30,7 +30,8 @@ def read_json_file(file_path: Path) -> Any | None:
         return None
     try:
         return json.loads(file_path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as e:
+        Console.error(f"读取 JSON 文件失败：{file_path}，{e}")
         return None
 
 
@@ -50,7 +51,8 @@ def rewrite_index_meta_store_dir(*, kb_dir: Path, kb_name: str) -> None:
         return
     try:
         data = json.loads(meta_file.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as e:
+        Console.error(f"读取索引元数据失败：{meta_file}，{e}")
         return
     if not isinstance(data, dict):
         return

@@ -183,7 +183,8 @@ class OpenAICompatibleHttpClient:
                     for raw_line in resp:
                         try:
                             line = raw_line.decode("utf-8", errors="replace").strip()
-                        except Exception:
+                        except Exception as e:
+                            Console.debug(f"SSE 行解码失败：{e}")
                             continue
                         if not line:
                             continue
@@ -194,7 +195,8 @@ class OpenAICompatibleHttpClient:
                             break
                         try:
                             chunk = json.loads(data)
-                        except Exception:
+                        except Exception as e:
+                            Console.debug(f"SSE chunk JSON 解析失败：{e}")
                             continue
                         if not isinstance(chunk, dict):
                             continue
@@ -330,7 +332,8 @@ class OpenAICompatibleHttpClient:
                 parsed = None
                 try:
                     parsed = json.loads(text)
-                except Exception:
+                except Exception as e:
+                    Console.debug(f"非 SSE 响应 JSON 解析失败：{e}")
                     parsed = None
                 if run_logger is not None:
                     run_logger.log_event(
@@ -380,7 +383,8 @@ class OpenAICompatibleHttpClient:
             parsed = None
             try:
                 parsed = json.loads(text)
-            except Exception:
+            except Exception as e2:
+                Console.debug(f"HTTP 错误体 JSON 解析失败：{e2}")
                 parsed = None
             if run_logger is not None:
                 run_logger.log_event(

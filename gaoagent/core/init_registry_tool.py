@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from gaoagent.core.runner.console import Console
 from gaoagent.core.runner.utils import PROJECTS_REGISTRY_FILENAME
 
 
@@ -37,7 +38,8 @@ class InitRegistryTool:
             return []
         try:
             lines = registry_file.read_text(encoding="utf-8").splitlines()
-        except Exception:
+        except Exception as e:
+            Console.error(f"读取项目注册表失败：{e}")
             return []
         paths: list[Path] = []
         seen: set[str] = set()
@@ -47,7 +49,8 @@ class InitRegistryTool:
                 continue
             try:
                 p = Path(raw).expanduser().resolve()
-            except Exception:
+            except Exception as e:
+                Console.error(f"解析注册路径失败：{raw}，{e}")
                 continue
             key = str(p)
             if key in seen:

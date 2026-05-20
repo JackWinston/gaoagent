@@ -6,6 +6,8 @@ import re
 import tomllib
 from typing import Any
 
+from gaoagent.core.runner.console import Console
+
 
 class ProjectOverviewTool:
     """项目概览生成与目录分析工具。"""
@@ -97,7 +99,8 @@ class ProjectOverviewTool:
             return merged
         try:
             child_records = runner.get_project_overview_refresh_records()
-        except Exception:
+        except Exception as e:
+            Console.error(f"获取子执行器刷新记录失败：{e}")
             return merged
         merged.extend(cls.clone_refresh_records(child_records))
         return merged
@@ -339,7 +342,8 @@ class ProjectOverviewTool:
             path_obj = Path(raw_path)
             try:
                 display_path = path_obj.resolve().relative_to(project_root.resolve()).as_posix()
-            except Exception:
+            except Exception as e:
+                Console.debug(f"路径解析失败，回退原始路径：{raw_path}，{e}")
                 display_path = raw_path
             size_chars = item.get("written_chars")
             if not isinstance(size_chars, int):
@@ -375,7 +379,8 @@ class ProjectOverviewTool:
 
         try:
             config = json.loads(config_path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as e:
+            Console.error(f"读取项目 API 配置失败：{config_path}，{e}")
             return None
 
         if not isinstance(config, dict):
@@ -552,7 +557,8 @@ class ProjectOverviewTool:
         children: list[Path] = []
         try:
             iterator = list(dir_path.iterdir())
-        except Exception:
+        except Exception as e:
+            Console.debug(f"遍历目录失败：{dir_path}，{e}")
             return []
 
         for child in iterator:
@@ -616,7 +622,8 @@ class ProjectOverviewTool:
             summary = "依赖与构建：使用 `pyproject.toml` 管理项目元数据与依赖"
             try:
                 payload = tomllib.loads(pyproject_file.read_text(encoding="utf-8"))
-            except Exception:
+            except Exception as e:
+                Console.debug(f"解析 pyproject.toml 失败：{e}")
                 payload = {}
             project_info = payload.get("project") if isinstance(payload, dict) else {}
             if isinstance(project_info, dict):
@@ -748,9 +755,11 @@ class ProjectOverviewTool:
         except UnicodeDecodeError:
             try:
                 return path.read_text(encoding="utf-8-sig")
-            except Exception:
+            except Exception as e:
+                Console.debug(f"读取文件失败（utf-8-sig 回退）：{path}，{e}")
                 return None
-        except Exception:
+        except Exception as e:
+            Console.debug(f"读取文件失败：{path}，{e}")
             return None
 
     def _dedupe_preserve_order(self, items: list[str], limit: int) -> list[str]:

@@ -131,7 +131,9 @@ def _to_jsonable(value: Any) -> Any:
     if is_dataclass(value):
         try:
             return {k: _to_jsonable(v) for k, v in asdict(value).items()}
-        except Exception:
+        except Exception as e:
+            from gaoagent.core.runner.console import Console
+            Console.debug(f"dataclass 序列化失败，回退 repr：{e}")
             return repr(value)
     if isinstance(value, dict):
         out: dict[str, Any] = {}
@@ -162,6 +164,8 @@ def _safe_json_dumps(value: Any) -> str:
 
     try:
         return json.dumps(value, ensure_ascii=False, sort_keys=True)
-    except Exception:
+    except Exception as e:
+        from gaoagent.core.runner.console import Console
+        Console.debug(f"JSON 序列化失败，回退 repr：{e}")
         return repr(value)
 

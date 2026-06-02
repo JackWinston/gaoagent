@@ -47,7 +47,7 @@
 ## 2. 如何安装
 
 ```bash
-git clone <你的仓库地址>
+git clone https://github.com/JackWinston/gaoagent
 cd GaoAgent
 pip install -e .
 ```
